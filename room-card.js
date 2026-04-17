@@ -1,7 +1,7 @@
 /**
  * room-card.js
  * Universal Room Card for Home Assistant
- * GitHub: https://github.com/robman2026/room-card
+ * GitHub: https://github.com/robman2026/Adaptive-Room-Card
  * Version: 1.0.0
  */
 
@@ -1045,5 +1045,5 @@ window.customCards.push({
   name: "Room Card",
   description: "Universal configurable room card with climate gauges, binary sensors, switches, and optional camera.",
   preview: true,
-  documentationURL: "https://github.com/robman2026/room-card",
+  documentationURL: "https://github.com/robman2026/Adaptive-Room-Card",
 });
