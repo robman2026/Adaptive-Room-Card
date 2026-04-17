@@ -564,7 +564,7 @@ class RoomCard extends LitElement {
       /* ── Camera ── */
       .camera-section { margin: 0 16px 12px; position: relative; z-index: 1; }
       .camera-container { border-radius: 14px; overflow: hidden; position: relative; border: 1px solid rgba(255,255,255,0.08); background: #0a0e1a; }
-      .camera-img { width: 100%; display: block; max-height: 220px; object-fit: cover; }
+      .camera-img { width: 100%; display: block; max-height: 300px; object-fit: cover; }
       .camera-overlay {
         position: absolute; bottom: 0; left: 0; right: 0;
         background: linear-gradient(transparent, rgba(0,0,0,0.6));
