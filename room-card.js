@@ -306,7 +306,7 @@ class RoomCard extends LitElement {
       away:     { label: "Away",     color: "#fbbf24" },
     };
     const merged   = { ...defaultMap, ...(sensor.state_map || {}) };
-    const display  = merged[state.toLowerCase()] || { label: state, color: "rgba(255,255,255,0.4)" };
+    let display    = merged[state.toLowerCase()] || { label: state, color: "rgba(255,255,255,0.4)" };
 
     const isMotion = _isMotionSensor(entityId, deviceClass);
     const isActive = MOTION_ACTIVE.includes(state.toLowerCase());
