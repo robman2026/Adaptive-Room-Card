@@ -2,12 +2,7 @@
  * room-card.js
  * Universal Room Card for Home Assistant
  * GitHub: https://github.com/robman2026/room-card
- * Version: 1.3.0
- *
- * Changelog v1.3.0:
- *  - Tap/click on binary sensor rows → hass-more-info popup (matches Kids Room card)
- *  - Tap/click on climate sensor tiles → hass-more-info popup
- *  - Motion sensors always show "Detected"/"Cleared" instead of raw "On"/"Off"
+ * Version: 1.2.0
  *
  * Changelog v1.2.0:
  *  - Climate tiles: exact Kids Room card layout & behavior
@@ -160,14 +155,6 @@ class RoomCard extends LitElement {
     return s ? !["unavailable", "unknown"].includes(s.state) : false;
   }
 
-  _moreInfo(entityId) {
-    if (!entityId) return;
-    this.dispatchEvent(new CustomEvent("hass-more-info", {
-      bubbles: true, composed: true,
-      detail: { entityId },
-    }));
-  }
-
   _now() {
     const d = new Date();
     return {
@@ -254,7 +241,7 @@ class RoomCard extends LitElement {
     const dashOffset  = isNum ? _arcOffset(numVal, min, max, circumference) : circumference;
 
     return html`
-      <div class="sensor-tile" style="cursor:pointer" @click="${() => this._moreInfo(entityId)}">
+      <div class="sensor-tile" style="cursor:default">
         <!-- gauge left: SVG rotated -90deg so arc starts at top -->
         <div class="gauge-wrap">
           <svg width="52" height="52" viewBox="0 0 52 52" style="transform:rotate(-90deg)">
@@ -311,13 +298,6 @@ class RoomCard extends LitElement {
     const isMotion = _isMotionSensor(entityId, deviceClass);
     const isActive = MOTION_ACTIVE.includes(state.toLowerCase());
 
-    // Motion sensors always show Detected / Cleared regardless of raw HA state ("on"/"off")
-    if (isMotion) {
-      display = isActive
-        ? { label: "Detected", color: "#f87171" }
-        : { label: "Cleared",  color: "#34d399" };
-    }
-
     // ── icon block ──────────────────────────────────────────────────────────
     // Motion: 🚶 in colored rounded square (green=clear, red=active+pulse)
     // Others: ha-icon in neutral rounded square
@@ -337,8 +317,7 @@ class RoomCard extends LitElement {
     // ── Compact tile (grid mode, cols > 1) ──────────────────────────────────
     if (snCols > 1) {
       return html`
-        <div class="sensor-tile-compact ${isMotion && isActive ? "motion-row-active" : ""}"
-             style="cursor:pointer" @click="${() => this._moreInfo(entityId)}">
+        <div class="sensor-tile-compact ${isMotion && isActive ? "motion-row-active" : ""}">
           ${motionIconHtml}
           <div class="sensor-tile-compact-name">${label}</div>
           <div class="sensor-tile-compact-state ${isMotion && isActive ? "state-detected" : ""}"
@@ -350,8 +329,7 @@ class RoomCard extends LitElement {
 
     // ── Full-width row ───────────────────────────────────────────────────────
     return html`
-      <div class="sensor-row ${isMotion && isActive ? "motion-row-active" : ""}"
-           style="cursor:pointer" @click="${() => this._moreInfo(entityId)}">
+      <div class="sensor-row ${isMotion && isActive ? "motion-row-active" : ""}">
         ${motionIconHtml}
         <div class="sensor-text">
           <div class="sensor-name">${label}</div>
@@ -1099,7 +1077,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c ROOM-CARD %c v1.3.0 ",
+  "%c ROOM-CARD %c v1.2.0 ",
   "color:white;background:#3b82f6;font-weight:bold;padding:2px 4px;border-radius:3px 0 0 3px;",
   "color:#3b82f6;background:#0f172a;font-weight:bold;padding:2px 4px;border-radius:0 3px 3px 0;"
 );
