@@ -1,0 +1,9 @@
+{
+  "name": "Room Card",
+  "description": "Universal configurable room card with climate gauges, binary sensors, switch tiles, and optional camera feed.",
+  "render_readme": true,
+  "domains": ["lovelace"],
+  "iot_class": "local_polling",
+  "homeassistant": "2023.9.0",
+  "filename": "room-card.js"
+}
