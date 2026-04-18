@@ -5,11 +5,6 @@
  * Version: 1.3.0
  *
  * Changelog v1.3.0:
- *  - Tap/click on binary sensor rows → hass-more-info popup (matches Kids Room card)
- *  - Tap/click on climate sensor tiles → hass-more-info popup
- *  - Motion sensors always show "Detected"/"Cleared" instead of raw "On"/"Off"
- *
- * Changelog v1.2.0:
  *  - Climate tiles: exact Kids Room card layout & behavior
  *    - Side-by-side 2-column row (flex row, each tile flex:1)
  *    - SVG arc uses rotate(-90deg), full-circle stroke-dashoffset approach
@@ -160,14 +155,6 @@ class RoomCard extends LitElement {
     return s ? !["unavailable", "unknown"].includes(s.state) : false;
   }
 
-  _moreInfo(entityId) {
-    if (!entityId) return;
-    this.dispatchEvent(new CustomEvent("hass-more-info", {
-      bubbles: true, composed: true,
-      detail: { entityId },
-    }));
-  }
-
   _now() {
     const d = new Date();
     return {
@@ -254,7 +241,7 @@ class RoomCard extends LitElement {
     const dashOffset  = isNum ? _arcOffset(numVal, min, max, circumference) : circumference;
 
     return html`
-      <div class="sensor-tile" style="cursor:pointer" @click="${() => this._moreInfo(entityId)}">
+      <div class="sensor-tile" style="cursor:default">
         <!-- gauge left: SVG rotated -90deg so arc starts at top -->
         <div class="gauge-wrap">
           <svg width="52" height="52" viewBox="0 0 52 52" style="transform:rotate(-90deg)">
@@ -306,17 +293,10 @@ class RoomCard extends LitElement {
       away:     { label: "Away",     color: "#fbbf24" },
     };
     const merged   = { ...defaultMap, ...(sensor.state_map || {}) };
-    let display    = merged[state.toLowerCase()] || { label: state, color: "rgba(255,255,255,0.4)" };
+    const display  = merged[state.toLowerCase()] || { label: state, color: "rgba(255,255,255,0.4)" };
 
     const isMotion = _isMotionSensor(entityId, deviceClass);
     const isActive = MOTION_ACTIVE.includes(state.toLowerCase());
-
-    // Motion sensors always show Detected / Cleared regardless of raw HA state ("on"/"off")
-    if (isMotion) {
-      display = isActive
-        ? { label: "Detected", color: "#f87171" }
-        : { label: "Cleared",  color: "#34d399" };
-    }
 
     // ── icon block ──────────────────────────────────────────────────────────
     // Motion: 🚶 in colored rounded square (green=clear, red=active+pulse)
@@ -337,8 +317,7 @@ class RoomCard extends LitElement {
     // ── Compact tile (grid mode, cols > 1) ──────────────────────────────────
     if (snCols > 1) {
       return html`
-        <div class="sensor-tile-compact ${isMotion && isActive ? "motion-row-active" : ""}"
-             style="cursor:pointer" @click="${() => this._moreInfo(entityId)}">
+        <div class="sensor-tile-compact ${isMotion && isActive ? "motion-row-active" : ""}">
           ${motionIconHtml}
           <div class="sensor-tile-compact-name">${label}</div>
           <div class="sensor-tile-compact-state ${isMotion && isActive ? "state-detected" : ""}"
@@ -350,8 +329,7 @@ class RoomCard extends LitElement {
 
     // ── Full-width row ───────────────────────────────────────────────────────
     return html`
-      <div class="sensor-row ${isMotion && isActive ? "motion-row-active" : ""}"
-           style="cursor:pointer" @click="${() => this._moreInfo(entityId)}">
+      <div class="sensor-row ${isMotion && isActive ? "motion-row-active" : ""}">
         ${motionIconHtml}
         <div class="sensor-text">
           <div class="sensor-name">${label}</div>
@@ -397,30 +375,31 @@ class RoomCard extends LitElement {
   }
 
   // ── Camera ────────────────────────────────────────────────────────────────────
+  // Delegates to <room-card-stream> which guards against re-initialising
+  // ha-camera-stream on every clock tick or hass state update. This fixes
+  // the show/disappear loop on cameras that are slow to respond (IPC_566SD54MP).
 
   _renderCamera() {
-    const entityId   = this._config.camera_entity;
-    if (!entityId || !this._config.show_camera) return "";
-    const stateObj   = this._stateOf(entityId);
-    const pictureUrl = stateObj ? stateObj.attributes.entity_picture : null;
-    const label      = stateObj ? this._friendlyName(entityId) : entityId;
+    const entityId = this._config.camera_entity;
+    if (!entityId || !this._config.show_camera) return '';
+    const stateObj = this._stateOf(entityId);
+    const label    = stateObj ? this._friendlyName(entityId) : entityId;
 
-    if (!pictureUrl) {
+    if (!stateObj) {
       return html`
         <div class="camera-placeholder">
           <ha-icon icon="mdi:camera-off"></ha-icon>
-          <span>No feed</span>
+          <span>Camera unavailable</span>
         </div>`;
     }
+
     return html`
       <div class="camera-container">
-        <img class="camera-img"
-             src="${this._hass.hassUrl(pictureUrl)}&t=${Date.now()}"
-             alt="${label}" />
-        <div class="camera-overlay">
-          <span class="camera-ts">${new Date().toLocaleString()}</span>
-          <span class="camera-lbl">${label.toUpperCase()}</span>
-        </div>
+        <room-card-stream
+          .hass=${this._hass}
+          .stateObj=${stateObj}
+          .label=${label}
+        ></room-card-stream>
       </div>
     `;
   }
@@ -564,14 +543,8 @@ class RoomCard extends LitElement {
       /* ── Camera ── */
       .camera-section { margin: 0 16px 12px; position: relative; z-index: 1; }
       .camera-container { border-radius: 14px; overflow: hidden; position: relative; border: 1px solid rgba(255,255,255,0.08); background: #0a0e1a; }
-      .camera-img { width: 100%; display: block; max-height: 300px; object-fit: cover; }
-      .camera-overlay {
-        position: absolute; bottom: 0; left: 0; right: 0;
-        background: linear-gradient(transparent, rgba(0,0,0,0.6));
-        padding: 8px 12px; display: flex; justify-content: space-between; align-items: flex-end;
-      }
-      .camera-ts  { font-size: 10px; letter-spacing: 1px; color: rgba(255,255,255,0.5); }
-      .camera-lbl { font-size: 10px; letter-spacing: 1px; color: rgba(255,255,255,0.5); text-transform: uppercase; }
+      /* room-card-stream renders ha-camera-stream which fills the container */
+      room-card-stream { display: block; width: 100%; }
       .camera-placeholder {
         display: flex; flex-direction: column; align-items: center; justify-content: center;
         gap: 6px; padding: 24px; border-radius: 14px;
@@ -1084,8 +1057,81 @@ class RoomCardEditor extends LitElement {
 }
 
 // ─────────────────────────────────────────────
+// ─────────────────────────────────────────────
+// CAMERA STREAM SUB-ELEMENT
+// Isolates ha-camera-stream from the parent card's render cycle.
+// Only reconfigures the stream when stateObj reference actually changes —
+// not on every clock tick or unrelated hass state update.
+// This fixes the show/disappear loop seen with IPC_566SD54MP cameras
+// when multiple cards with camera feeds are on the same dashboard.
+// ─────────────────────────────────────────────
+class RoomCardStream extends LitElement {
+  static get properties() {
+    return {
+      hass:     {},
+      stateObj: {},
+      label:    {},
+    };
+  }
+
+  updated(changedProps) {
+    // Only touch ha-camera-stream when stateObj has actually changed
+    if (!changedProps.has("stateObj") && !changedProps.has("hass")) return;
+    const stream = this.shadowRoot.querySelector("ha-camera-stream");
+    if (!stream) return;
+    // Guard: only reconfigure when stateObj reference changes
+    if (stream._rcLastStateObj === this.stateObj && stream._rcLastHass === this.hass) return;
+    stream._rcLastStateObj = this.stateObj;
+    stream._rcLastHass     = this.hass;
+    stream.hass     = this.hass;
+    stream.stateObj = this.stateObj;
+    if (typeof stream.requestUpdate === "function") stream.requestUpdate();
+  }
+
+  render() {
+    if (!this.stateObj) return html``;
+    return html`
+      <div class="stream-wrap">
+        <ha-camera-stream
+          allow-exoplayer
+          muted
+          playsinline
+        ></ha-camera-stream>
+        <div class="stream-overlay">
+          <span class="stream-label">${(this.label || "").toUpperCase()}</span>
+          <span class="stream-live">● LIVE</span>
+        </div>
+      </div>
+    `;
+  }
+
+  static get styles() {
+    return css`
+      :host { display: block; }
+      .stream-wrap {
+        position: relative; border-radius: 14px; overflow: hidden;
+        background: #0a0e1a; border: 1px solid rgba(255,255,255,0.08);
+      }
+      ha-camera-stream {
+        width: 100%; display: block;
+        max-height: 350px; object-fit: cover;
+        --video-border-radius: 0;
+      }
+      .stream-overlay {
+        position: absolute; bottom: 0; left: 0; right: 0;
+        padding: 8px 12px;
+        background: linear-gradient(transparent, rgba(0,0,0,0.6));
+        display: flex; justify-content: space-between; align-items: flex-end;
+      }
+      .stream-label { font-size: 10px; letter-spacing: 1px; color: rgba(255,255,255,0.5); text-transform: uppercase; }
+      .stream-live  { font-size: 9px;  letter-spacing: 1px; color: #f87171; font-weight: 600; border: 1px solid rgba(248,113,113,0.4); padding: 2px 6px; border-radius: 4px; }
+    `;
+  }
+}
+
 // REGISTER
 // ─────────────────────────────────────────────
+customElements.define("room-card-stream", RoomCardStream);
 customElements.define("room-card", RoomCard);
 customElements.define("room-card-editor", RoomCardEditor);
 
