@@ -2,9 +2,9 @@
  * room-card.js
  * Universal Room Card for Home Assistant
  * GitHub: https://github.com/robman2026/room-card
- * Version: 1.3.0
+ * Version: 1.3.1
  *
- * Changelog v1.3.0:
+ * Changelog v1.3.1:
  *  - Climate tiles: exact Kids Room card layout & behavior
  *    - Side-by-side 2-column row (flex row, each tile flex:1)
  *    - SVG arc uses rotate(-90deg), full-circle stroke-dashoffset approach
@@ -45,6 +45,37 @@ function _tempSeverityColor(value) {
     { pos: 27, r: 0xF8, g: 0xFF, b: 0x42 },
     { pos: 35, r: 0xFF, g: 0x35, b: 0x02 },
     { pos: 50, r: 0xFF, g: 0x35, b: 0x02 },
+  ];
+  const clamped = Math.max(stops[0].pos, Math.min(stops[stops.length - 1].pos, value));
+  let lo = stops[0], hi = stops[stops.length - 1];
+  for (let i = 0; i < stops.length - 1; i++) {
+    if (clamped >= stops[i].pos && clamped <= stops[i + 1].pos) {
+      lo = stops[i]; hi = stops[i + 1]; break;
+    }
+  }
+  const f = (clamped - lo.pos) / ((hi.pos - lo.pos) || 1);
+  const r = Math.round(lo.r + f * (hi.r - lo.r));
+  const g = Math.round(lo.g + f * (hi.g - lo.g));
+  const b = Math.round(lo.b + f * (hi.b - lo.b));
+  return `rgb(${r},${g},${b})`;
+}
+
+// Humidity severity color
+// 0-30   = orange  (#f97316)
+// 30-40  = yellow→green interpolated
+// 40-60  = green   (#22c55e)
+// 60-80  = green→red interpolated
+// >80    = red     (#ef4444)
+function _humSeverityColor(value) {
+  const stops = [
+    { pos: 0,  r: 0xF9, g: 0x73, b: 0x16 }, // orange
+    { pos: 30, r: 0xF9, g: 0x73, b: 0x16 }, // orange
+    { pos: 35, r: 0xEA, g: 0xB3, b: 0x08 }, // yellow
+    { pos: 40, r: 0x22, g: 0xC5, b: 0x5E }, // green
+    { pos: 60, r: 0x22, g: 0xC5, b: 0x5E }, // green
+    { pos: 70, r: 0xEA, g: 0xB3, b: 0x08 }, // yellow
+    { pos: 80, r: 0xEF, g: 0x44, b: 0x44 }, // red
+    { pos: 100,r: 0xEF, g: 0x44, b: 0x44 }, // red
   ];
   const clamped = Math.max(stops[0].pos, Math.min(stops[stops.length - 1].pos, value));
   let lo = stops[0], hi = stops[stops.length - 1];
@@ -177,12 +208,20 @@ class RoomCard extends LitElement {
   _sensorType(entityId, deviceClass) {
     const dc  = (deviceClass || "").toLowerCase();
     const eid = (entityId    || "").toLowerCase();
-    if (dc === "temperature"  || eid.includes("temp"))   return "temperature";
-    if (dc === "humidity"     || eid.includes("humid"))  return "humidity";
-    if (dc === "carbon_dioxide" || dc === "volatile_organic_compounds"
-        || eid.includes("co2") || eid.includes("voc"))  return "co2";
-    if (dc === "pressure"     || eid.includes("press"))  return "pressure";
-    if (dc === "illuminance"  || eid.includes("lux"))    return "illuminance";
+    // Check device_class first — most reliable. Then entity name.
+    // Humidity checked before temperature so "temp_hum_..." entities
+    // with device_class=humidity are not misidentified as temperature.
+    if (dc === "humidity")                                return "humidity";
+    if (dc === "temperature")                             return "temperature";
+    if (dc === "carbon_dioxide" || dc === "volatile_organic_compounds") return "co2";
+    if (dc === "pressure")                                return "pressure";
+    if (dc === "illuminance")                             return "illuminance";
+    // Fallback: entity name — humidity checked first for the same reason
+    if (eid.includes("humid"))                            return "humidity";
+    if (eid.includes("temp"))                             return "temperature";
+    if (eid.includes("co2") || eid.includes("voc"))      return "co2";
+    if (eid.includes("press"))                            return "pressure";
+    if (eid.includes("lux"))                              return "illuminance";
     return "default";
   }
 
@@ -214,7 +253,7 @@ class RoomCard extends LitElement {
       displayVal = isNum ? numVal.toFixed(1) : "--";
       gaugeUnit  = unit || "°C";
     } else if (type === "humidity") {
-      color      = "#60a5fa";
+      color      = isNum ? _humSeverityColor(numVal) : "#22c55e";
       displayVal = isNum ? numVal.toFixed(0) : "--";
       gaugeUnit  = unit || "%";
     } else if (type === "co2") {
@@ -1145,7 +1184,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c ROOM-CARD %c v1.3.0 ",
+  "%c ROOM-CARD %c v1.3.1 ",
   "color:white;background:#3b82f6;font-weight:bold;padding:2px 4px;border-radius:3px 0 0 3px;",
   "color:#3b82f6;background:#0f172a;font-weight:bold;padding:2px 4px;border-radius:0 3px 3px 0;"
 );
