@@ -1051,7 +1051,7 @@ class RoomCard extends LitElement {
       @keyframes mow-spin-fast { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
       .mow-spin      { animation: mow-spin      1.8s linear infinite; }
       .mow-spin-fast { animation: mow-spin-fast 0.7s linear infinite; }
-    \`;
+    `;
   }
 }
 
