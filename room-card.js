@@ -516,64 +516,76 @@ class RoomCard extends LitElement {
     `;
   }
 
-  // ── Mower SVG icon — accurate Automower shape ─────────────────────────────────
-  // Body: wide rounded wedge. Two large spoked wheels. Red stop button. H badge.
-  // Mowing: wheels + blade spin. Other states: static + dimmed if docked.
+  // ── Mower SVG icon — accurate Automower shape ───────────────────────────────
+  // Returns a Lit html template. Rules to avoid LitElement SVG namespace bugs:
+  //  - ONE html`` call, ONE <svg> root, no nested html`` inside the SVG
+  //  - No <text> elements (broken in html`` SVG context) — H drawn as paths
+  //  - Conditionals pre-computed as strings before the template
 
   _mowerSVG(state) {
-    const isMowing   = state === "mowing";
+    const isMowing    = state === "mowing";
     const isReturning = state === "returning";
-    const isError    = state === "error";
-    const isDocked   = state === "docked";
-    const opacity    = isDocked ? "0.55" : "1";
-    const spinClass  = isMowing ? "mow-spin" : "";
-    const bodyColor  = isError ? "#7f1d1d" : "#3d4a52";
-    const domeColor  = isError ? "#991b1b" : "#4a5760";
-    const grassL     = (isMowing || isReturning) && !isDocked;
+    const isActive    = isMowing || isReturning;
+    const isError     = state === "error";
+    const isDocked    = state === "docked";
+    const opacity     = isDocked ? "0.5" : "1";
+    const spinCls     = isMowing ? "mow-spin" : "";
+    const bodyFill    = isError ? "#7f1d1d" : "#3d4a52";
+    const domeFill    = isError ? "#991b1b" : "#4a5760";
+    const stopFill    = isError ? "#fca5a5" : "#dc2626";
+
+    // grass visibility via opacity attribute (avoids conditional html``)
+    const grassOp  = isActive ? "1" : "0";
+    const bladeOp  = isMowing ? "1" : "0";
+    const motionOp = isActive ? "0.18" : "0";
 
     return html`
       <svg viewBox="0 0 64 48" width="64" height="48" fill="none"
-           xmlns="http://www.w3.org/2000/svg" style="opacity:${opacity};overflow:visible">
+           xmlns="http://www.w3.org/2000/svg"
+           style="opacity:${opacity};overflow:visible;flex-shrink:0">
 
-        ${grassL ? html`
-          <!-- tall uncut grass left -->
+        <!-- tall uncut grass left — hidden when docked/paused/error -->
+        <g opacity="${grassOp}">
           <path d="M3 36 C3 29 1 25 1 20" stroke="#22c55e" stroke-width="2" stroke-linecap="round"/>
           <path d="M3 36 C4 27 7 24 8 19" stroke="#4ade80" stroke-width="2" stroke-linecap="round"/>
           <path d="M9 36 C9 28 7 24 6 19" stroke="#22c55e" stroke-width="2" stroke-linecap="round"/>
           <!-- cut line -->
           <line x1="9" y1="36" x2="64" y2="36" stroke="#fbbf24" stroke-width="0.9"
-            stroke-dasharray="2.5 2" opacity="0.65"/>
-          <!-- motion lines -->
-          <line x1="14" y1="27" x2="10" y2="27" stroke="rgba(255,255,255,0.15)"
-            stroke-width="1" stroke-linecap="round"/>
-          <line x1="14" y1="31" x2="9" y2="31" stroke="rgba(255,255,255,0.15)"
-            stroke-width="1" stroke-linecap="round"/>
-        ` : ""}
+                stroke-dasharray="2.5 2" opacity="0.65"/>
+          <!-- short cut grass right -->
+          <path d="M55 36 C55 32 54 30 54 28" stroke="#4ade80" stroke-width="1.5" stroke-linecap="round"/>
+          <path d="M59 36 C59 32 60 30 61 28" stroke="#22c55e" stroke-width="1.5" stroke-linecap="round"/>
+          <path d="M62 36 C62 32 61 30 60 28" stroke="#4ade80" stroke-width="1.4" stroke-linecap="round"/>
+        </g>
 
-        <!-- mower body -->
-        <path d="M14 36 Q14 24 20 22 L52 22 Q58 22 58 30 L58 36 Z"
-              fill="${bodyColor}" opacity="0.98"/>
+        <!-- motion lines -->
+        <g opacity="${motionOp}">
+          <line x1="14" y1="27" x2="10" y2="27" stroke="white" stroke-width="1" stroke-linecap="round"/>
+          <line x1="14" y1="31" x2="9"  y2="31" stroke="white" stroke-width="1" stroke-linecap="round"/>
+        </g>
+
+        <!-- mower body: wide rounded wedge -->
+        <path d="M14 36 Q14 24 20 22 L52 22 Q58 22 58 30 L58 36 Z" fill="${bodyFill}" opacity="0.98"/>
         <!-- top dome -->
-        <path d="M18 22 Q18 15 26 14 L48 14 Q56 14 56 20 L56 22 L18 22 Z"
-              fill="${domeColor}" opacity="0.95"/>
-        <!-- panel line -->
+        <path d="M18 22 Q18 15 26 14 L48 14 Q56 14 56 20 L56 22 L18 22 Z" fill="${domeFill}" opacity="0.95"/>
+        <!-- panel highlight -->
         <path d="M20 18 L52 18" stroke="rgba(255,255,255,0.08)" stroke-width="0.8"/>
 
         <!-- red stop button -->
-        <rect x="22" y="14" width="7" height="3.5" rx="1.5"
-              fill="${isError ? "#fca5a5" : "#dc2626"}" opacity="0.95"/>
+        <rect x="22" y="14" width="7" height="3.5" rx="1.5" fill="${stopFill}" opacity="0.95"/>
         <rect x="22.5" y="14.5" width="6" height="1.5" rx="0.8" fill="#ef4444" opacity="0.6"/>
 
-        <!-- H badge on body front -->
-        <circle cx="50" cy="29" r="5" fill="#1a1f35"
-                stroke="rgba(255,255,255,0.2)" stroke-width="0.8"/>
-        <text x="47.2" y="32.5" font-size="6.5" font-weight="900"
-              fill="white" font-family="Arial,sans-serif" opacity="0.95">H</text>
+        <!-- H badge on body — drawn as paths, no <text> -->
+        <circle cx="50" cy="29" r="5" fill="#1a1f35" stroke="rgba(255,255,255,0.2)" stroke-width="0.8"/>
+        <!-- H letter: two verticals + crossbar -->
+        <line x1="47.5" y1="26.5" x2="47.5" y2="31.5" stroke="white" stroke-width="1.4" stroke-linecap="round" opacity="0.9"/>
+        <line x1="52.5" y1="26.5" x2="52.5" y2="31.5" stroke="white" stroke-width="1.4" stroke-linecap="round" opacity="0.9"/>
+        <line x1="47.5" y1="29"   x2="52.5" y2="29"   stroke="white" stroke-width="1.2" stroke-linecap="round" opacity="0.9"/>
 
         <!-- left large wheel -->
         <circle cx="22" cy="36" r="9" fill="#2d3748"/>
         <circle cx="22" cy="36" r="7.5" fill="#1a202c"/>
-        <g class="${spinClass}" style="transform-origin:22px 36px">
+        <g class="${spinCls}" style="transform-origin:22px 36px">
           <line x1="22" y1="28.5" x2="22" y2="43.5" stroke="rgba(255,255,255,0.25)" stroke-width="1.2"/>
           <line x1="14.5" y1="36" x2="29.5" y2="36" stroke="rgba(255,255,255,0.25)" stroke-width="1.2"/>
           <line x1="16.7" y1="30.7" x2="27.3" y2="41.3" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
@@ -581,13 +593,15 @@ class RoomCard extends LitElement {
         </g>
         <circle cx="22" cy="36" r="3" fill="#4a5568"/>
         <circle cx="22" cy="36" r="1.5" fill="rgba(255,255,255,0.3)"/>
-        <text x="19.5" y="37.8" font-size="4" font-weight="900"
-              fill="rgba(255,255,255,0.6)" font-family="Arial,sans-serif">H</text>
+        <!-- H on left wheel hub -->
+        <line x1="20.5" y1="34.8" x2="20.5" y2="37.2" stroke="rgba(255,255,255,0.5)" stroke-width="1" stroke-linecap="round"/>
+        <line x1="23.5" y1="34.8" x2="23.5" y2="37.2" stroke="rgba(255,255,255,0.5)" stroke-width="1" stroke-linecap="round"/>
+        <line x1="20.5" y1="36"   x2="23.5" y2="36"   stroke="rgba(255,255,255,0.5)" stroke-width="0.9" stroke-linecap="round"/>
 
         <!-- right large wheel -->
         <circle cx="50" cy="36" r="9" fill="#2d3748"/>
         <circle cx="50" cy="36" r="7.5" fill="#1a202c"/>
-        <g class="${spinClass}" style="transform-origin:50px 36px">
+        <g class="${spinCls}" style="transform-origin:50px 36px">
           <line x1="50" y1="28.5" x2="50" y2="43.5" stroke="rgba(255,255,255,0.28)" stroke-width="1.2"/>
           <line x1="42.5" y1="36" x2="57.5" y2="36" stroke="rgba(255,255,255,0.28)" stroke-width="1.2"/>
           <line x1="44.7" y1="30.7" x2="55.3" y2="41.3" stroke="rgba(255,255,255,0.18)" stroke-width="1"/>
@@ -599,29 +613,23 @@ class RoomCard extends LitElement {
         <!-- front caster -->
         <ellipse cx="35" cy="37.5" rx="3" ry="2" fill="#2d3748"/>
 
-        ${isMowing ? html`
-          <!-- spinning blade disc -->
+        <!-- spinning blade disc — hidden when not mowing -->
+        <g opacity="${bladeOp}">
           <circle cx="36" cy="37" r="3.5" fill="rgba(34,197,94,0.08)"
                   stroke="rgba(34,197,94,0.3)" stroke-width="0.8"/>
           <g class="mow-spin-fast" style="transform-origin:36px 37px">
             <line x1="32.5" y1="37" x2="39.5" y2="37"
-                  stroke="#22c55e" stroke-width="1" stroke-linecap="round" opacity="0.85"/>
+                  stroke="#22c55e" stroke-width="1" stroke-linecap="round"/>
             <line x1="36" y1="33.5" x2="36" y2="40.5"
-                  stroke="#22c55e" stroke-width="1" stroke-linecap="round" opacity="0.85"/>
+                  stroke="#22c55e" stroke-width="1" stroke-linecap="round"/>
           </g>
-        ` : ""}
+        </g>
 
-        ${grassL ? html`
-          <!-- short cut grass right -->
-          <path d="M55 36 C55 32 54 30 54 28" stroke="#4ade80" stroke-width="1.5" stroke-linecap="round"/>
-          <path d="M59 36 C59 32 60 30 61 28" stroke="#22c55e" stroke-width="1.5" stroke-linecap="round"/>
-          <path d="M62 36 C62 32 61 30 60 28" stroke="#4ade80" stroke-width="1.4" stroke-linecap="round"/>
-        ` : ""}
       </svg>
     `;
   }
 
-  // ── Mower tile ────────────────────────────────────────────────────────────────
+    // ── Mower tile ────────────────────────────────────────────────────────────────
 
   _renderMower() {
     const cfg = this._config;
@@ -1466,8 +1474,8 @@ class RoomCardEditor extends LitElement {
       :host { display: block; font-family: 'Segoe UI', sans-serif; }
       .editor-root { display: flex; flex-direction: column; }
 
-      .tab-bar { display: flex; border-bottom: 1px solid rgba(0,0,0,0.15); background: var(--card-background-color, #1e293b); border-radius: 8px 8px 0 0; overflow: hidden; }
-      .tab-btn { flex: 1; padding: 10px 4px; font-size: 0.78rem; font-weight: 600; letter-spacing: 0.04em; border: none; background: transparent; color: var(--secondary-text-color, #94a3b8); cursor: pointer; transition: background 0.15s, color 0.15s; text-transform: uppercase; }
+      .tab-bar { display: flex; flex-wrap: wrap; border-bottom: 1px solid rgba(0,0,0,0.15); background: var(--card-background-color, #1e293b); border-radius: 8px 8px 0 0; }
+      .tab-btn { flex: 1; min-width: 80px; padding: 8px 4px; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.04em; border: none; background: transparent; color: var(--secondary-text-color, #94a3b8); cursor: pointer; transition: background 0.15s, color 0.15s; text-transform: uppercase; }
       .tab-btn.active { color: var(--primary-color, #3b82f6); border-bottom: 2px solid var(--primary-color, #3b82f6); background: rgba(59,130,246,0.06); }
 
       .tab-content { padding: 12px 4px; display: flex; flex-direction: column; gap: 4px; }
