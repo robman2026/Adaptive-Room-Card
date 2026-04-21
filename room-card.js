@@ -241,6 +241,14 @@ class RoomCard extends LitElement {
     return `${Math.floor(diff / 86400)}d ago`;
   }
 
+  _moreInfo(entityId) {
+    if (!entityId) return;
+    this.dispatchEvent(new CustomEvent("hass-more-info", {
+      bubbles: true, composed: true,
+      detail: { entityId },
+    }));
+  }
+
   // ── Detect sensor type for auto-color ────────────────────────────────────────
 
   _sensorType(entityId, deviceClass) {
@@ -318,7 +326,7 @@ class RoomCard extends LitElement {
     const dashOffset  = isNum ? _arcOffset(numVal, min, max, circumference) : circumference;
 
     return html`
-      <div class="sensor-tile" style="cursor:default">
+      <div class="sensor-tile" style="cursor:pointer" @click="${() => this._moreInfo(entityId)}">
         <!-- gauge left: SVG rotated -90deg so arc starts at top -->
         <div class="gauge-wrap">
           <svg width="52" height="52" viewBox="0 0 52 52" style="transform:rotate(-90deg)">
@@ -394,7 +402,7 @@ class RoomCard extends LitElement {
     // ── Compact tile (grid mode, cols > 1) ──────────────────────────────────
     if (snCols > 1) {
       return html`
-        <div class="sensor-tile-compact ${isMotion && isActive ? "motion-row-active" : ""}">
+        <div class="sensor-tile-compact ${isMotion && isActive ? "motion-row-active" : ""}" style="cursor:pointer" @click="${() => this._moreInfo(entityId)}">
           ${motionIconHtml}
           <div class="sensor-tile-compact-name">${label}</div>
           <div class="sensor-tile-compact-state ${isMotion && isActive ? "state-detected" : ""}"
@@ -406,7 +414,7 @@ class RoomCard extends LitElement {
 
     // ── Full-width row ───────────────────────────────────────────────────────
     return html`
-      <div class="sensor-row ${isMotion && isActive ? "motion-row-active" : ""}">
+      <div class="sensor-row ${isMotion && isActive ? "motion-row-active" : ""}" style="cursor:pointer" @click="${() => this._moreInfo(entityId)}">
         ${motionIconHtml}
         <div class="sensor-text">
           <div class="sensor-name">${label}</div>
@@ -479,7 +487,7 @@ class RoomCard extends LitElement {
 
     return html`
       <div class="power-section">
-        <div class="power-tile">
+        <div class="power-tile" style="cursor:pointer" @click="${() => this._moreInfo(cfg.power_entity)}">
           <div class="power-arc-wrap">
             <svg width="76" height="76" viewBox="0 0 76 76" style="transform:rotate(-135deg);overflow:visible">
               <circle cx="38" cy="38" r="${R}"
@@ -675,7 +683,7 @@ class RoomCard extends LitElement {
       <div class="mower-section">
         <div class="mower-tile">
           <!-- header row: icon + info + Automower SVG -->
-          <div class="mower-header">
+          <div class="mower-header" style="cursor:pointer" @click="${() => this._moreInfo(cfg.mower_entity)}">
             <div class="mower-icon-box" style="background:${iconBg};border-color:${iconBdr}">
               🤖
             </div>
@@ -745,6 +753,8 @@ class RoomCard extends LitElement {
           .hass=${this._hass}
           .stateObj=${stateObj}
           .label=${label}
+          .entityId=${entityId}
+          @camera-more-info="${(e) => this._moreInfo(e.detail.entityId)}"
         ></room-card-stream>
       </div>
     `;
@@ -920,8 +930,10 @@ class RoomCard extends LitElement {
       }
       .sensor-row {
         display: flex; align-items: center;
-        padding: 11px 14px; gap: 10px;
+        padding: 11px 14px; gap: 10px; cursor: pointer;
+        transition: background 0.15s;
       }
+      .sensor-row:hover { background: rgba(255,255,255,0.05); }
       .sensor-row:not(:last-child) { border-bottom: 1px solid rgba(255,255,255,0.05); }
 
       /* icon square — matches Kids Room card exactly */
@@ -1544,7 +1556,16 @@ class RoomCardStream extends LitElement {
       hass:     {},
       stateObj: {},
       label:    {},
+      entityId: {},
     };
+  }
+
+  _fireMoreInfo() {
+    if (!this.entityId) return;
+    this.dispatchEvent(new CustomEvent("camera-more-info", {
+      bubbles: true, composed: true,
+      detail: { entityId: this.entityId },
+    }));
   }
 
   updated(changedProps) {
@@ -1564,7 +1585,7 @@ class RoomCardStream extends LitElement {
   render() {
     if (!this.stateObj) return html``;
     return html`
-      <div class="stream-wrap">
+      <div class="stream-wrap" @click="${() => this._fireMoreInfo()}">
         <ha-camera-stream
           allow-exoplayer
           muted
@@ -1572,7 +1593,21 @@ class RoomCardStream extends LitElement {
         ></ha-camera-stream>
         <div class="stream-overlay">
           <span class="stream-label">${(this.label || "").toUpperCase()}</span>
-          <span class="stream-live">● LIVE</span>
+          <div class="stream-right">
+            <span class="stream-live">● LIVE</span>
+            <button class="stream-fs-btn"
+              title="Open fullscreen"
+              @click="${(e) => { e.stopPropagation(); this._fireMoreInfo(); }}">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" stroke-width="2.2"
+                   stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="15 3 21 3 21 9"/>
+                <polyline points="9 21 3 21 3 15"/>
+                <line x1="21" y1="3" x2="14" y2="10"/>
+                <line x1="3" y1="21" x2="10" y2="14"/>
+              </svg>
+            </button>
+          </div>
         </div>
       </div>
     `;
@@ -1598,6 +1633,17 @@ class RoomCardStream extends LitElement {
       }
       .stream-label { font-size: 10px; letter-spacing: 1px; color: rgba(255,255,255,0.5); text-transform: uppercase; }
       .stream-live  { font-size: 9px;  letter-spacing: 1px; color: #f87171; font-weight: 600; border: 1px solid rgba(248,113,113,0.4); padding: 2px 6px; border-radius: 4px; }
+      .stream-right { display: flex; align-items: center; gap: 6px; }
+      .stream-wrap  { cursor: pointer; }
+      .stream-fs-btn {
+        width: 26px; height: 26px; border-radius: 6px;
+        background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.18);
+        display: flex; align-items: center; justify-content: center;
+        cursor: pointer; color: rgba(255,255,255,0.75);
+        transition: background 0.2s; padding: 0;
+      }
+      .stream-fs-btn:hover  { background: rgba(99,179,237,0.25); color: #fff; }
+      .stream-fs-btn:active { transform: scale(0.92); }
     `;
   }
 }
