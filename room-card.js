@@ -2,22 +2,17 @@
  * room-card.js
  * Universal Room Card for Home Assistant
  * GitHub: https://github.com/robman2026/room-card
- * Version: 1.4.1
+ * Version: 1.5.0
  *
- * Changelog v1.3.1:
- *  - Climate tiles: exact Kids Room card layout & behavior
- *    - Side-by-side 2-column row (flex row, each tile flex:1)
- *    - SVG arc uses rotate(-90deg), full-circle stroke-dashoffset approach
- *    - Temperature: interpolated severity color (blue→green→yellow→red) with glow
- *    - Humidity: fixed #60a5fa blue glow — matches Kids Room card exactly
- *    - Value colored same as arc, large font. Label small uppercase.
- *    - No configurable color — fully automatic
- *  - Motion icon: exact Kids Room card behavior
- *    - 🚶 emoji in 32×32 rounded square, green bg when clear, red+glow+pulse when active
- *    - Row gets motion-active class, icon pulses, state text fades
- *  - Binary sensors: configurable 1–4 column layout
- *  - Editor: searchable entity dropdowns, no climate color picker
- *  - Fix bug with showing more infos on tap/click on entity
+ * Changelog v1.5.0:
+ *  - Configurable color stops for temperature and humidity sensors
+ *    - Visual editor: per-stop value + color picker + live gradient bar preview
+ *    - Stored as JSON array in config: temp_color_stops / hum_color_stops
+ *    - Falls back to built-in defaults when not configured
+ *    - Applied to both SVG arc stroke AND value text color
+ *  - Color stop logic extracted to shared _interpolateStops() helper
+ *  - Editor: new "Colors" tab with Add/Remove stop controls for both sensors
+ *  - getStubConfig updated to include default stops
  */
 
 const LitElement = Object.getPrototypeOf(customElements.get("ha-panel-lovelace"));
@@ -37,68 +32,83 @@ function _isMotionSensor(entityId, deviceClass) {
          id.includes("miscare");
 }
 
-// ── Temperature severity color — exact Kids Room card stops ──────────────────
-// 0→#2391FF(blue), 19→#14FF6A(green), 27→#F8FF42(yellow), 35→#FF3502(red)
-function _tempSeverityColor(value) {
-  const stops = [
-    { pos: 0,  r: 0x23, g: 0x91, b: 0xFF },
-    { pos: 19, r: 0x14, g: 0xFF, b: 0x6A },
-    { pos: 27, r: 0xF8, g: 0xFF, b: 0x42 },
-    { pos: 35, r: 0xFF, g: 0x35, b: 0x02 },
-    { pos: 50, r: 0xFF, g: 0x35, b: 0x02 },
-  ];
-  const clamped = Math.max(stops[0].pos, Math.min(stops[stops.length - 1].pos, value));
-  let lo = stops[0], hi = stops[stops.length - 1];
-  for (let i = 0; i < stops.length - 1; i++) {
-    if (clamped >= stops[i].pos && clamped <= stops[i + 1].pos) {
-      lo = stops[i]; hi = stops[i + 1]; break;
+// ── Default color stops (used when not configured) ────────────────────────────
+const DEFAULT_TEMP_STOPS = [
+  { pos: 0,  color: "#2391FF" },
+  { pos: 19, color: "#14FF6A" },
+  { pos: 27, color: "#F8FF42" },
+  { pos: 35, color: "#FF3502" },
+  { pos: 50, color: "#FF3502" },
+];
+
+const DEFAULT_HUM_STOPS = [
+  { pos: 0,  color: "#f97316" },
+  { pos: 30, color: "#f97316" },
+  { pos: 35, color: "#eab308" },
+  { pos: 40, color: "#22c55e" },
+  { pos: 60, color: "#22c55e" },
+  { pos: 70, color: "#eab308" },
+  { pos: 80, color: "#ef4444" },
+  { pos: 100,color: "#ef4444" },
+];
+
+// ── Shared interpolation engine ───────────────────────────────────────────────
+// Accepts an array of { pos, color } where color is a hex string "#rrggbb"
+function _interpolateStops(stops, value) {
+  if (!stops || stops.length === 0) return "#94a3b8";
+
+  // Parse hex → { r, g, b }
+  const parse = (hex) => {
+    const c = hex.replace("#", "");
+    const full = c.length === 3
+      ? c.split("").map((x) => x + x).join("")
+      : c;
+    return {
+      r: parseInt(full.slice(0, 2), 16),
+      g: parseInt(full.slice(2, 4), 16),
+      b: parseInt(full.slice(4, 6), 16),
+    };
+  };
+
+  // Sort stops by position
+  const sorted = [...stops].sort((a, b) => a.pos - b.pos);
+  const first  = sorted[0];
+  const last   = sorted[sorted.length - 1];
+  const clamped = Math.max(first.pos, Math.min(last.pos, value));
+
+  let lo = first, hi = last;
+  for (let i = 0; i < sorted.length - 1; i++) {
+    if (clamped >= sorted[i].pos && clamped <= sorted[i + 1].pos) {
+      lo = sorted[i]; hi = sorted[i + 1]; break;
     }
   }
-  const f = (clamped - lo.pos) / ((hi.pos - lo.pos) || 1);
-  const r = Math.round(lo.r + f * (hi.r - lo.r));
-  const g = Math.round(lo.g + f * (hi.g - lo.g));
-  const b = Math.round(lo.b + f * (hi.b - lo.b));
+
+  const range = hi.pos - lo.pos || 1;
+  const f = (clamped - lo.pos) / range;
+  const lc = parse(lo.color);
+  const hc = parse(hi.color);
+  const r = Math.round(lc.r + f * (hc.r - lc.r));
+  const g = Math.round(lc.g + f * (hc.g - lc.g));
+  const b = Math.round(lc.b + f * (hc.b - lc.b));
   return `rgb(${r},${g},${b})`;
 }
 
-// Humidity severity color
-// 0-30   = orange  (#f97316)
-// 30-40  = yellow→green interpolated
-// 40-60  = green   (#22c55e)
-// 60-80  = green→red interpolated
-// >80    = red     (#ef4444)
-function _humSeverityColor(value) {
-  const stops = [
-    { pos: 0,  r: 0xF9, g: 0x73, b: 0x16 }, // orange
-    { pos: 30, r: 0xF9, g: 0x73, b: 0x16 }, // orange
-    { pos: 35, r: 0xEA, g: 0xB3, b: 0x08 }, // yellow
-    { pos: 40, r: 0x22, g: 0xC5, b: 0x5E }, // green
-    { pos: 60, r: 0x22, g: 0xC5, b: 0x5E }, // green
-    { pos: 70, r: 0xEA, g: 0xB3, b: 0x08 }, // yellow
-    { pos: 80, r: 0xEF, g: 0x44, b: 0x44 }, // red
-    { pos: 100,r: 0xEF, g: 0x44, b: 0x44 }, // red
-  ];
-  const clamped = Math.max(stops[0].pos, Math.min(stops[stops.length - 1].pos, value));
-  let lo = stops[0], hi = stops[stops.length - 1];
-  for (let i = 0; i < stops.length - 1; i++) {
-    if (clamped >= stops[i].pos && clamped <= stops[i + 1].pos) {
-      lo = stops[i]; hi = stops[i + 1]; break;
-    }
-  }
-  const f = (clamped - lo.pos) / ((hi.pos - lo.pos) || 1);
-  const r = Math.round(lo.r + f * (hi.r - lo.r));
-  const g = Math.round(lo.g + f * (hi.g - lo.g));
-  const b = Math.round(lo.b + f * (hi.b - lo.b));
-  return `rgb(${r},${g},${b})`;
+// ── Backward-compatible wrappers ──────────────────────────────────────────────
+function _tempSeverityColor(value, stops) {
+  return _interpolateStops(stops && stops.length ? stops : DEFAULT_TEMP_STOPS, value);
 }
 
-// Arc dashoffset — same formula as Kids Room card (circumference = 2π×r)
+function _humSeverityColor(value, stops) {
+  return _interpolateStops(stops && stops.length ? stops : DEFAULT_HUM_STOPS, value);
+}
+
+// Arc dashoffset — same formula as before
 function _arcOffset(value, min, max, circumference) {
   const pct = Math.min(1, Math.max(0, (value - min) / ((max - min) || 1)));
   return circumference - pct * circumference;
 }
 
-// Power severity color — green→yellow→orange→red as wattage rises
+// Power severity color — unchanged
 function _powerSeverityColor(value, max) {
   const pct   = Math.min(1, Math.max(0, value / (max || 3000)));
   const stops = [
@@ -142,6 +152,8 @@ class RoomCard extends LitElement {
       show_status_dot: true,
       status_entity: "",
       climate_sensors: [],
+      temp_color_stops: JSON.parse(JSON.stringify(DEFAULT_TEMP_STOPS)),
+      hum_color_stops:  JSON.parse(JSON.stringify(DEFAULT_HUM_STOPS)),
       binary_sensors: [],
       sensor_columns: 1,
       switches: [],
@@ -171,6 +183,8 @@ class RoomCard extends LitElement {
       show_status_dot: false,
       status_entity: "",
       climate_sensors: [],
+      temp_color_stops: JSON.parse(JSON.stringify(DEFAULT_TEMP_STOPS)),
+      hum_color_stops:  JSON.parse(JSON.stringify(DEFAULT_HUM_STOPS)),
       binary_sensors: [],
       sensor_columns: 1,
       switches: [],
@@ -255,15 +269,11 @@ class RoomCard extends LitElement {
   _sensorType(entityId, deviceClass) {
     const dc  = (deviceClass || "").toLowerCase();
     const eid = (entityId    || "").toLowerCase();
-    // Check device_class first — most reliable. Then entity name.
-    // Humidity checked before temperature so "temp_hum_..." entities
-    // with device_class=humidity are not misidentified as temperature.
     if (dc === "humidity")                                return "humidity";
     if (dc === "temperature")                             return "temperature";
     if (dc === "carbon_dioxide" || dc === "volatile_organic_compounds") return "co2";
     if (dc === "pressure")                                return "pressure";
     if (dc === "illuminance")                             return "illuminance";
-    // Fallback: entity name — humidity checked first for the same reason
     if (eid.includes("humid"))                            return "humidity";
     if (eid.includes("temp"))                             return "temperature";
     if (eid.includes("co2") || eid.includes("voc"))      return "co2";
@@ -272,11 +282,8 @@ class RoomCard extends LitElement {
     return "default";
   }
 
-  // ── Climate sensor tile — exact Kids Room layout ──────────────────────────────
-  // SVG: 52×52, r=20, circumference=125.6, rotate(-90deg) on the SVG element
-  // Temperature: severity color interpolation + drop-shadow glow
-  // Humidity: fixed #60a5fa + drop-shadow glow
-  // Other sensors: use a sensible fixed color
+  // ── Climate sensor tile ───────────────────────────────────────────────────────
+  // Uses configurable color stops from _config.temp_color_stops / hum_color_stops
 
   _renderClimateSensor(sensor) {
     const entityId    = sensor.entity;
@@ -291,16 +298,18 @@ class RoomCard extends LitElement {
 
     const type = this._sensorType(entityId, deviceClass);
 
-    // ── color & display value per type ──────────────────────────────────────
+    const tempStops = this._config.temp_color_stops || DEFAULT_TEMP_STOPS;
+    const humStops  = this._config.hum_color_stops  || DEFAULT_HUM_STOPS;
+
     let color, displayVal, gaugeUnit;
     const isNum = !isNaN(numVal) && rawVal !== null;
 
     if (type === "temperature") {
-      color      = isNum ? _tempSeverityColor(numVal) : "#2391FF";
+      color      = isNum ? _tempSeverityColor(numVal, tempStops) : "#2391FF";
       displayVal = isNum ? numVal.toFixed(1) : "--";
       gaugeUnit  = unit || "°C";
     } else if (type === "humidity") {
-      color      = isNum ? _humSeverityColor(numVal) : "#22c55e";
+      color      = isNum ? _humSeverityColor(numVal, humStops) : "#22c55e";
       displayVal = isNum ? numVal.toFixed(0) : "--";
       gaugeUnit  = unit || "%";
     } else if (type === "co2") {
@@ -321,14 +330,12 @@ class RoomCard extends LitElement {
       gaugeUnit  = unit;
     }
 
-    // ── arc geometry — same as Kids Room card ──────────────────────────────
     const R           = 20;
-    const circumference = 2 * Math.PI * R; // ≈ 125.66
+    const circumference = 2 * Math.PI * R;
     const dashOffset  = isNum ? _arcOffset(numVal, min, max, circumference) : circumference;
 
     return html`
       <div class="sensor-tile" style="cursor:pointer" @click="${() => this._moreInfo(entityId)}">
-        <!-- gauge left: SVG rotated -90deg so arc starts at top -->
         <div class="gauge-wrap">
           <svg width="52" height="52" viewBox="0 0 52 52" style="transform:rotate(-90deg)">
             <circle cx="26" cy="26" r="${R}"
@@ -344,7 +351,6 @@ class RoomCard extends LitElement {
             <div class="gauge-unit-sm">${gaugeUnit}</div>
           </div>
         </div>
-        <!-- value + label right -->
         <div class="sensor-info">
           <div class="sensor-value" style="color:${color}">
             <span>${displayVal}</span><span class="sensor-unit">${gaugeUnit}</span>
@@ -356,8 +362,6 @@ class RoomCard extends LitElement {
   }
 
   // ── Binary / state sensor row ─────────────────────────────────────────────────
-  // Motion: 🚶 emoji in rounded square, green bg=clear, red+glow+pulse=active
-  // Others: ha-icon in rounded square
 
   _renderBinarySensor(sensor) {
     const entityId    = sensor.entity;
@@ -367,7 +371,6 @@ class RoomCard extends LitElement {
     const deviceClass = this._attr(entityId, "device_class") || "";
     const ago         = this._agoStr(stateObj ? stateObj.last_changed : null);
 
-    // State → display mapping
     const defaultMap = {
       on:       { label: "On",       color: "#fbbf24" },
       off:      { label: "Off",      color: "rgba(255,255,255,0.4)" },
@@ -384,9 +387,6 @@ class RoomCard extends LitElement {
     const isMotion = _isMotionSensor(entityId, deviceClass);
     const isActive = MOTION_ACTIVE.includes(state.toLowerCase());
 
-    // ── icon block ──────────────────────────────────────────────────────────
-    // Motion: 🚶 in colored rounded square (green=clear, red=active+pulse)
-    // Others: ha-icon in neutral rounded square
     const motionIconHtml = isMotion ? html`
       <div class="sensor-icon ${isActive ? "motion-icon-active" : "motion-icon-clear"}">
         🚶
@@ -400,7 +400,6 @@ class RoomCard extends LitElement {
 
     const snCols = Math.max(1, Math.min(4, parseInt(this._config.sensor_columns) || 1));
 
-    // ── Compact tile (grid mode, cols > 1) ──────────────────────────────────
     if (snCols > 1) {
       return html`
         <div class="sensor-tile-compact ${isMotion && isActive ? "motion-row-active" : ""}" style="cursor:pointer" @click="${() => this._moreInfo(entityId)}">
@@ -413,7 +412,6 @@ class RoomCard extends LitElement {
       `;
     }
 
-    // ── Full-width row ───────────────────────────────────────────────────────
     return html`
       <div class="sensor-row ${isMotion && isActive ? "motion-row-active" : ""}" style="cursor:pointer" @click="${() => this._moreInfo(entityId)}">
         ${motionIconHtml}
@@ -437,7 +435,6 @@ class RoomCard extends LitElement {
     const label    = sw.label || (stateObj ? this._friendlyName(entityId) : entityId);
     const icon     = sw.icon  || (isOn ? "mdi:lightbulb" : "mdi:lightbulb-off");
     const color    = sw.color || "#fbbf24";
-    const ago      = this._agoStr(stateObj ? stateObj.last_changed : null);
 
     return html`
       <div class="light-btn ${isOn ? "on" : ""}"
@@ -460,7 +457,7 @@ class RoomCard extends LitElement {
     this._hass.callService(domain, currentState === "on" ? "turn_off" : "turn_on", { entity_id: entityId });
   }
 
-  // ── Power arc gauge (Option B) ───────────────────────────────────────────────
+  // ── Power arc gauge ───────────────────────────────────────────────────────────
 
   _renderPower() {
     const cfg = this._config;
@@ -471,15 +468,12 @@ class RoomCard extends LitElement {
     const maxW     = parseFloat(cfg.power_max_w) || 3000;
     const color    = _powerSeverityColor(watts, maxW);
 
-    // kWh total
     const enState  = cfg.power_energy_entity ? this._stateOf(cfg.power_energy_entity) : null;
     const kwh      = enState ? parseFloat(enState.state).toFixed(2) + " kWh" : "";
 
-    // current (A)
     const ampState = cfg.power_current_entity ? this._stateOf(cfg.power_current_entity) : null;
     const amps     = ampState ? parseFloat(ampState.state).toFixed(2) + " A" : "";
 
-    // arc geometry — 270° arc (same --sw approach as climate)
     const R    = 30;
     const C    = 2 * Math.PI * R;
     const arc  = C * 0.75;
@@ -507,17 +501,11 @@ class RoomCard extends LitElement {
             </div>
           </div>
           <div class="power-text">
-            <div>
-              <span class="power-main" style="color:${color}">${Math.round(watts)}</span>
-              <span class="power-main-unit"> W</span>
-            </div>
-            ${(kwh || amps) ? html`
-              <div class="power-sub">
-                ${kwh  ? html`<div class="power-sub-item"><div class="power-sub-val">${kwh}</div><div class="power-sub-lbl">Total</div></div>` : ""}
-                ${amps ? html`<div class="power-sub-item"><div class="power-sub-val">${amps}</div><div class="power-sub-lbl">Current</div></div>` : ""}
-              </div>` : ""}
-            <div class="power-consuming" style="color:${watts < 5 ? "rgba(255,255,255,0.25)" : color}">
-              ${watts < 5 ? "STANDBY" : "CONSUMING"}
+            <div class="power-main" style="color:${color}">${Math.round(watts)}<span class="power-main-unit"> W</span></div>
+            <div class="power-consuming" style="color:${color}">Consuming</div>
+            <div class="power-sub">
+              ${kwh  ? html`<div class="power-sub-item"><div class="power-sub-val">${kwh}</div><div class="power-sub-lbl">Energy</div></div>` : ""}
+              ${amps ? html`<div class="power-sub-item"><div class="power-sub-val">${amps}</div><div class="power-sub-lbl">Current</div></div>` : ""}
             </div>
           </div>
         </div>
@@ -525,11 +513,7 @@ class RoomCard extends LitElement {
     `;
   }
 
-  // ── Mower SVG icon — accurate Automower shape ───────────────────────────────
-  // Returns a Lit html template. Rules to avoid LitElement SVG namespace bugs:
-  //  - ONE html`` call, ONE <svg> root, no nested html`` inside the SVG
-  //  - No <text> elements (broken in html`` SVG context) — H drawn as paths
-  //  - Conditionals pre-computed as strings before the template
+  // ── Mower SVG ─────────────────────────────────────────────────────────────────
 
   _mowerSVG(state) {
     const isMowing    = state === "mowing";
@@ -542,56 +526,36 @@ class RoomCard extends LitElement {
     const bodyFill    = isError ? "#7f1d1d" : "#3d4a52";
     const domeFill    = isError ? "#991b1b" : "#4a5760";
     const stopFill    = isError ? "#fca5a5" : "#dc2626";
-
-    // grass visibility via opacity attribute (avoids conditional html``)
-    const grassOp  = isActive ? "1" : "0";
-    const bladeOp  = isMowing ? "1" : "0";
-    const motionOp = isActive ? "0.18" : "0";
+    const grassOp     = isActive ? "1" : "0";
+    const bladeOp     = isMowing ? "1" : "0";
+    const motionOp    = isActive ? "0.18" : "0";
 
     return html`
       <svg viewBox="0 0 64 48" width="64" height="48" fill="none"
            xmlns="http://www.w3.org/2000/svg"
            style="opacity:${opacity};overflow:visible;flex-shrink:0">
-
-        <!-- tall uncut grass left — hidden when docked/paused/error -->
         <g opacity="${grassOp}">
           <path d="M3 36 C3 29 1 25 1 20" stroke="#22c55e" stroke-width="2" stroke-linecap="round"/>
           <path d="M3 36 C4 27 7 24 8 19" stroke="#4ade80" stroke-width="2" stroke-linecap="round"/>
           <path d="M9 36 C9 28 7 24 6 19" stroke="#22c55e" stroke-width="2" stroke-linecap="round"/>
-          <!-- cut line -->
-          <line x1="9" y1="36" x2="64" y2="36" stroke="#fbbf24" stroke-width="0.9"
-                stroke-dasharray="2.5 2" opacity="0.65"/>
-          <!-- short cut grass right -->
+          <line x1="9" y1="36" x2="64" y2="36" stroke="#fbbf24" stroke-width="0.9" stroke-dasharray="2.5 2" opacity="0.65"/>
           <path d="M55 36 C55 32 54 30 54 28" stroke="#4ade80" stroke-width="1.5" stroke-linecap="round"/>
           <path d="M59 36 C59 32 60 30 61 28" stroke="#22c55e" stroke-width="1.5" stroke-linecap="round"/>
           <path d="M62 36 C62 32 61 30 60 28" stroke="#4ade80" stroke-width="1.4" stroke-linecap="round"/>
         </g>
-
-        <!-- motion lines -->
         <g opacity="${motionOp}">
           <line x1="14" y1="27" x2="10" y2="27" stroke="white" stroke-width="1" stroke-linecap="round"/>
           <line x1="14" y1="31" x2="9"  y2="31" stroke="white" stroke-width="1" stroke-linecap="round"/>
         </g>
-
-        <!-- mower body: wide rounded wedge -->
         <path d="M14 36 Q14 24 20 22 L52 22 Q58 22 58 30 L58 36 Z" fill="${bodyFill}" opacity="0.98"/>
-        <!-- top dome -->
         <path d="M18 22 Q18 15 26 14 L48 14 Q56 14 56 20 L56 22 L18 22 Z" fill="${domeFill}" opacity="0.95"/>
-        <!-- panel highlight -->
         <path d="M20 18 L52 18" stroke="rgba(255,255,255,0.08)" stroke-width="0.8"/>
-
-        <!-- red stop button -->
         <rect x="22" y="14" width="7" height="3.5" rx="1.5" fill="${stopFill}" opacity="0.95"/>
         <rect x="22.5" y="14.5" width="6" height="1.5" rx="0.8" fill="#ef4444" opacity="0.6"/>
-
-        <!-- H badge on body — drawn as paths, no <text> -->
         <circle cx="50" cy="29" r="5" fill="#1a1f35" stroke="rgba(255,255,255,0.2)" stroke-width="0.8"/>
-        <!-- H letter: two verticals + crossbar -->
         <line x1="47.5" y1="26.5" x2="47.5" y2="31.5" stroke="white" stroke-width="1.4" stroke-linecap="round" opacity="0.9"/>
         <line x1="52.5" y1="26.5" x2="52.5" y2="31.5" stroke="white" stroke-width="1.4" stroke-linecap="round" opacity="0.9"/>
         <line x1="47.5" y1="29"   x2="52.5" y2="29"   stroke="white" stroke-width="1.2" stroke-linecap="round" opacity="0.9"/>
-
-        <!-- left large wheel -->
         <circle cx="22" cy="36" r="9" fill="#2d3748"/>
         <circle cx="22" cy="36" r="7.5" fill="#1a202c"/>
         <g class="${spinCls}" style="transform-origin:22px 36px">
@@ -602,12 +566,6 @@ class RoomCard extends LitElement {
         </g>
         <circle cx="22" cy="36" r="3" fill="#4a5568"/>
         <circle cx="22" cy="36" r="1.5" fill="rgba(255,255,255,0.3)"/>
-        <!-- H on left wheel hub -->
-        <line x1="20.5" y1="34.8" x2="20.5" y2="37.2" stroke="rgba(255,255,255,0.5)" stroke-width="1" stroke-linecap="round"/>
-        <line x1="23.5" y1="34.8" x2="23.5" y2="37.2" stroke="rgba(255,255,255,0.5)" stroke-width="1" stroke-linecap="round"/>
-        <line x1="20.5" y1="36"   x2="23.5" y2="36"   stroke="rgba(255,255,255,0.5)" stroke-width="0.9" stroke-linecap="round"/>
-
-        <!-- right large wheel -->
         <circle cx="50" cy="36" r="9" fill="#2d3748"/>
         <circle cx="50" cy="36" r="7.5" fill="#1a202c"/>
         <g class="${spinCls}" style="transform-origin:50px 36px">
@@ -618,27 +576,19 @@ class RoomCard extends LitElement {
         </g>
         <circle cx="50" cy="36" r="3" fill="#4a5568"/>
         <circle cx="50" cy="36" r="1.5" fill="rgba(255,255,255,0.3)"/>
-
-        <!-- front caster -->
         <ellipse cx="35" cy="37.5" rx="3" ry="2" fill="#2d3748"/>
-
-        <!-- spinning blade disc — hidden when not mowing -->
         <g opacity="${bladeOp}">
-          <circle cx="36" cy="37" r="3.5" fill="rgba(34,197,94,0.08)"
-                  stroke="rgba(34,197,94,0.3)" stroke-width="0.8"/>
+          <circle cx="36" cy="37" r="3.5" fill="rgba(34,197,94,0.08)" stroke="rgba(34,197,94,0.3)" stroke-width="0.8"/>
           <g class="mow-spin-fast" style="transform-origin:36px 37px">
-            <line x1="32.5" y1="37" x2="39.5" y2="37"
-                  stroke="#22c55e" stroke-width="1" stroke-linecap="round"/>
-            <line x1="36" y1="33.5" x2="36" y2="40.5"
-                  stroke="#22c55e" stroke-width="1" stroke-linecap="round"/>
+            <line x1="32.5" y1="37" x2="39.5" y2="37" stroke="#22c55e" stroke-width="1" stroke-linecap="round"/>
+            <line x1="36" y1="33.5" x2="36" y2="40.5" stroke="#22c55e" stroke-width="1" stroke-linecap="round"/>
           </g>
         </g>
-
       </svg>
     `;
   }
 
-    // ── Mower tile ────────────────────────────────────────────────────────────────
+  // ── Mower tile ────────────────────────────────────────────────────────────────
 
   _renderMower() {
     const cfg = this._config;
@@ -649,14 +599,12 @@ class RoomCard extends LitElement {
     const name        = cfg.mower_name || (stateObj ? this._friendlyName(cfg.mower_entity) : "Mower");
     const ago         = this._agoStr(stateObj ? stateObj.last_changed : null);
 
-    // battery from linked sensor entity
     const battState   = cfg.mower_battery_entity ? this._stateOf(cfg.mower_battery_entity) : null;
     const battPct     = battState ? Math.round(parseFloat(battState.state)) : null;
     const battColor   = battPct === null ? "#6b7280"
                       : battPct > 50 ? "#22c55e"
                       : battPct > 20 ? "#fbbf24" : "#ef4444";
 
-    // badge per state
     const BADGES = {
       mowing:    { label: "Mowing",    color: "#22c55e", bg: "rgba(34,197,94,0.15)"   },
       docked:    { label: "Docked",    color: "#60a5fa", bg: "rgba(99,179,237,0.15)"  },
@@ -665,15 +613,11 @@ class RoomCard extends LitElement {
       error:     { label: "Error",     color: "#ef4444", bg: "rgba(239,68,68,0.18)"   },
     };
     const badge = BADGES[state] || { label: state, color: "#6b7280", bg: "rgba(107,114,128,0.15)" };
-
-    // icon box bg matches badge
     const iconBg  = state === "mowing" ? "rgba(34,197,94,0.15)" : "rgba(99,179,237,0.1)";
     const iconBdr = state === "mowing" ? "rgba(34,197,94,0.3)"  : "rgba(99,179,237,0.2)";
 
-    // action buttons
-    const isMowing   = state === "mowing";
+    const isMowing    = state === "mowing";
     const isReturning = state === "returning";
-    const isPaused   = state === "paused";
 
     const _callMower = (action) => {
       if (!this._hass || !cfg.mower_entity) return;
@@ -683,46 +627,33 @@ class RoomCard extends LitElement {
     return html`
       <div class="mower-section">
         <div class="mower-tile">
-          <!-- header row: icon + info + Automower SVG -->
           <div class="mower-header" style="cursor:pointer" @click="${() => this._moreInfo(cfg.mower_entity)}">
-            <div class="mower-icon-box" style="background:${iconBg};border-color:${iconBdr}">
-              🤖
-            </div>
+            <div class="mower-icon-box" style="background:${iconBg};border-color:${iconBdr}">🤖</div>
             <div class="mower-info">
               <div class="mower-name">${name}</div>
               <div class="mower-status-row">
                 ${ago ? html`<span class="mower-ago">${ago}</span>` : ""}
-                <span class="mower-badge"
-                  style="color:${badge.color};background:${badge.bg}">${badge.label}</span>
+                <span class="mower-badge" style="color:${badge.color};background:${badge.bg}">${badge.label}</span>
               </div>
             </div>
-            <!-- Automower SVG — right side -->
             ${this._mowerSVG(state)}
           </div>
-
-          <!-- battery bar -->
           ${battPct !== null ? html`
             <div class="mower-batt">
               <span class="mower-batt-ico">🔋</span>
               <div class="mower-batt-track">
-                <div class="mower-batt-fill"
-                     style="width:${battPct}%;background:${battColor}"></div>
+                <div class="mower-batt-fill" style="width:${battPct}%;background:${battColor}"></div>
               </div>
               <div class="mower-batt-pct">${battPct}%</div>
             </div>
           ` : ""}
-
-          <!-- action buttons -->
           <div class="mower-btns">
             ${(isMowing || isReturning) ? html`
-              <button class="mow-btn mow-pause"
-                @click="${() => _callMower("pause")}">⏸ Pause</button>
+              <button class="mow-btn mow-pause" @click="${() => _callMower("pause")}">⏸ Pause</button>
             ` : html`
-              <button class="mow-btn mow-start"
-                @click="${() => _callMower("start_mowing")}">▶ Start Mowing</button>
+              <button class="mow-btn mow-start" @click="${() => _callMower("start_mowing")}">▶ Start Mowing</button>
             `}
-            <button class="mow-btn mow-dock"
-              @click="${() => _callMower("dock")}">⬆ Return to Dock</button>
+            <button class="mow-btn mow-dock" @click="${() => _callMower("dock")}">⬆ Return to Dock</button>
           </div>
         </div>
       </div>
@@ -730,13 +661,10 @@ class RoomCard extends LitElement {
   }
 
   // ── Camera ────────────────────────────────────────────────────────────────────
-  // Delegates to <room-card-stream> which guards against re-initialising
-  // ha-camera-stream on every clock tick or hass state update. This fixes
-  // the show/disappear loop on cameras that are slow to respond (IPC_566SD54MP).
 
   _renderCamera() {
     const entityId = this._config.camera_entity;
-    if (!entityId || !this._config.show_camera) return '';
+    if (!entityId || !this._config.show_camera) return "";
     const stateObj = this._stateOf(entityId);
     const label    = stateObj ? this._friendlyName(entityId) : entityId;
 
@@ -766,23 +694,21 @@ class RoomCard extends LitElement {
   render() {
     if (!this._config || !this._hass) return html``;
 
-    const cfg     = this._config;
+    const cfg      = this._config;
     const { date, time } = this._now();
-    const online  = this._isOnline(cfg.status_entity);
-    const climate = cfg.climate_sensors || [];
-    const binary  = cfg.binary_sensors  || [];
+    const online   = this._isOnline(cfg.status_entity);
+    const climate  = cfg.climate_sensors || [];
+    const binary   = cfg.binary_sensors  || [];
     const switches = cfg.switches        || [];
-    const snCols  = Math.max(1, Math.min(4, parseInt(cfg.sensor_columns) || 1));
-    const swCols  = switches.length === 1 ? 1
-                  : switches.length === 2 ? 2
-                  : switches.length === 3 ? 3
-                  : switches.length <= 4 ? 2 : 3;
+    const snCols   = Math.max(1, Math.min(4, parseInt(cfg.sensor_columns) || 1));
+    const swCols   = switches.length === 1 ? 1
+                   : switches.length === 2 ? 2
+                   : switches.length === 3 ? 3
+                   : switches.length <= 4 ? 2 : 3;
 
     return html`
       <ha-card>
         <div class="card">
-
-          <!-- HEADER -->
           <div class="header">
             <div class="header-left">
               ${cfg.room_icon ? html`<ha-icon icon="${cfg.room_icon}" class="room-icon"></ha-icon>` : ""}
@@ -797,38 +723,30 @@ class RoomCard extends LitElement {
               <div class="status-dot ${online ? "dot-online" : "dot-offline"}"></div>` : ""}
           </div>
 
-          <!-- CLIMATE — side-by-side row, exactly like Kids Room card -->
           ${climate.length > 0 ? html`
             <div class="sensors-row">
               ${climate.map((s) => this._renderClimateSensor(s))}
             </div>` : ""}
 
-          <!-- CAMERA -->
           ${cfg.show_camera && cfg.camera_entity ? html`
             <div class="camera-section">${this._renderCamera()}</div>` : ""}
 
-          <!-- POWER ARC -->
           ${cfg.show_power && cfg.power_entity ? this._renderPower() : ""}
 
-          <!-- MOWER -->
           ${cfg.show_mower && cfg.mower_entity ? this._renderMower() : ""}
 
-          <!-- GLOW DIVIDER -->
           ${(binary.length > 0 || switches.length > 0) ? html`<div class="glow-line"></div>` : ""}
 
-          <!-- BINARY SENSORS -->
           ${binary.length > 0 ? html`
             <div class="${snCols > 1 ? "sensors-grid" : "sensors-list"}"
                  style="${snCols > 1 ? `--sn-cols:${snCols}` : ""}">
               ${binary.map((s) => this._renderBinarySensor(s))}
             </div>` : ""}
 
-          <!-- SWITCHES -->
           ${switches.length > 0 ? html`
             <div class="lights-row" style="--sw-cols:${swCols}">
               ${switches.map((s) => this._renderSwitch(s))}
             </div>` : ""}
-
         </div>
       </ha-card>
     `;
@@ -840,7 +758,6 @@ class RoomCard extends LitElement {
     return css`
       :host { display: block; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
 
-      /* ── Card shell — exact Kids Room card ── */
       ha-card { background: transparent; box-shadow: none; border: none; }
       .card {
         background: linear-gradient(145deg, #1a1f35 0%, #0f1628 50%, #141929 100%);
@@ -856,7 +773,6 @@ class RoomCard extends LitElement {
         pointer-events: none; z-index: 0;
       }
 
-      /* ── Header ── */
       .header {
         display: flex; align-items: center; justify-content: space-between;
         padding: 16px 20px 10px; position: relative; z-index: 1; gap: 8px;
@@ -875,12 +791,10 @@ class RoomCard extends LitElement {
         50% { opacity:0.6; box-shadow:0 0 14px rgba(52,211,153,0.4); }
       }
 
-      /* ── Climate tiles — exact Kids Room card ── */
       .sensors-row {
         display: flex; gap: 12px;
         padding: 0 16px 12px; position: relative; z-index: 1;
       }
-      /* each tile — Kids Room card: flex:1, bg rgba, border, 14px radius, 12px pad */
       .sensor-tile {
         flex: 1; background: rgba(255,255,255,0.04);
         border: 1px solid rgba(255,255,255,0.08);
@@ -888,7 +802,6 @@ class RoomCard extends LitElement {
         display: flex; align-items: center; gap: 10px;
         min-width: 0;
       }
-      /* gauge — Kids Room card: 52×52 wrap, SVG rotated -90deg */
       .gauge-wrap { position: relative; width: 52px; height: 52px; flex-shrink: 0; }
       .gauge-wrap svg { transform: rotate(-90deg); }
       .gauge-center {
@@ -897,16 +810,13 @@ class RoomCard extends LitElement {
       }
       .gauge-val-sm  { font-size: 10px; font-weight: 700; color: #fff; line-height: 1; }
       .gauge-unit-sm { font-size: 6px; color: rgba(255,255,255,0.5); }
-      /* value text — Kids Room card: 20px bold, same color as arc */
       .sensor-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
       .sensor-value { font-size: 20px; font-weight: 700; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .sensor-unit  { font-size: 12px; font-weight: 400; }
       .sensor-label { font-size: 9px; letter-spacing: 1.5px; color: rgba(255,255,255,0.35); text-transform: uppercase; margin-top: 2px; }
 
-      /* ── Camera ── */
       .camera-section { margin: 0 16px 12px; position: relative; z-index: 1; }
       .camera-container { border-radius: 14px; overflow: hidden; position: relative; border: 1px solid rgba(255,255,255,0.08); background: #0a0e1a; }
-      /* room-card-stream renders ha-camera-stream which fills the container */
       room-card-stream { display: block; width: 100%; }
       .camera-placeholder {
         display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -915,14 +825,12 @@ class RoomCard extends LitElement {
         color: rgba(255,255,255,0.3); font-size: 0.75rem;
       }
 
-      /* ── Glow divider ── */
       .glow-line {
         height: 1px;
         background: linear-gradient(90deg, transparent, rgba(99,179,237,0.3), rgba(168,85,247,0.3), transparent);
         margin: 0 16px;
       }
 
-      /* ── Binary sensors — row mode — exact Kids Room card ── */
       .sensors-list {
         margin: 12px 16px 12px;
         background: rgba(255,255,255,0.03);
@@ -937,7 +845,6 @@ class RoomCard extends LitElement {
       .sensor-row:hover { background: rgba(255,255,255,0.05); }
       .sensor-row:not(:last-child) { border-bottom: 1px solid rgba(255,255,255,0.05); }
 
-      /* icon square — matches Kids Room card exactly */
       .sensor-icon {
         width: 32px; height: 32px; border-radius: 8px;
         display: flex; align-items: center; justify-content: center;
@@ -955,13 +862,11 @@ class RoomCard extends LitElement {
       .sensor-name { font-size: 13px; font-weight: 500; color: rgba(255,255,255,0.85); }
       .sensor-time { font-size: 10px; color: rgba(255,255,255,0.3); }
       .sensor-state { font-size: 13px; font-weight: 600; }
-      /* motion-specific state colors — exact Kids Room card */
       .state-clear    { color: #34d399; }
       .state-detected { color: #f87171; animation: motion-pulse 1.5s ease-in-out infinite; }
       @keyframes motion-pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
       .motion-row-active .sensor-icon { animation: icon-pulse 1.5s ease-in-out infinite; }
 
-      /* ── Binary sensors — compact tile grid (2-4 cols) ── */
       .sensors-grid {
         display: grid;
         grid-template-columns: repeat(var(--sn-cols, 2), 1fr);
@@ -979,7 +884,6 @@ class RoomCard extends LitElement {
       .sensor-tile-compact-state { font-size: 11px; font-weight: 700; }
       .sensor-tile-compact-ago   { font-size: 9px; color: rgba(255,255,255,0.28); }
 
-      /* ── Switches / lights ── */
       .lights-row {
         display: grid;
         grid-template-columns: repeat(var(--sw-cols, 2), 1fr);
@@ -1000,7 +904,6 @@ class RoomCard extends LitElement {
       .light-status { font-size: 10px; color: rgba(255,255,255,0.25); text-transform: uppercase; letter-spacing: 0.5px; }
       .light-btn.on .light-status { color: rgba(251,191,36,0.5); }
 
-      /* ── Power arc gauge ── */
       .power-section { margin: 0 16px 12px; position: relative; z-index: 1; }
       .power-tile {
         background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
@@ -1023,7 +926,6 @@ class RoomCard extends LitElement {
       .power-sub-lbl { font-size: 8px; letter-spacing: 0.9px; color: rgba(255,255,255,0.28); text-transform: uppercase; }
       .power-consuming { font-size: 8px; letter-spacing: 1.1px; text-transform: uppercase; font-weight: 700; }
 
-      /* ── Mower tile ── */
       .mower-section { margin: 0 16px 12px; position: relative; z-index: 1; }
       .mower-tile {
         background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
@@ -1059,7 +961,6 @@ class RoomCard extends LitElement {
       .mow-pause { border-color: rgba(168,85,247,0.28); color: #a855f7; background: rgba(168,85,247,0.08); }
       .mow-dock  { border-color: rgba(251,191,36,0.25); color: #fbbf24; background: rgba(251,191,36,0.08); }
 
-      /* ── Mower SVG spin animations ── */
       @keyframes mow-spin      { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
       @keyframes mow-spin-fast { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
       .mow-spin      { animation: mow-spin      1.8s linear infinite; }
@@ -1207,6 +1108,73 @@ class RoomCardEditor extends LitElement {
     `;
   }
 
+  // ── Color stop editor ─────────────────────────────────────────────────────────
+  // Renders the gradient bar + per-stop rows (value field + color picker + remove)
+  // Used for both temp_color_stops and hum_color_stops
+
+  _renderColorStops(stopsKey, unit, defaults) {
+    const stops = this._config[stopsKey] && this._config[stopsKey].length
+      ? this._config[stopsKey]
+      : JSON.parse(JSON.stringify(defaults));
+
+    // Build CSS gradient string for preview bar
+    const sorted = [...stops].sort((a, b) => a.pos - b.pos);
+    const gradientColors = sorted.map((s) => s.color).join(",");
+    const gradientBar = sorted.length > 1
+      ? `linear-gradient(to right,${gradientColors})`
+      : sorted.length === 1 ? sorted[0].color : "#334155";
+
+    const _updateStop = (idx, field, value) => {
+      const newStops = stops.map((s, i) =>
+        i === idx ? { ...s, [field]: field === "pos" ? parseFloat(value) || 0 : value } : s
+      );
+      this._set(stopsKey, newStops);
+    };
+
+    const _removeStop = (idx) => {
+      if (stops.length <= 2) return; // keep at least 2 stops
+      const newStops = stops.filter((_, i) => i !== idx);
+      this._set(stopsKey, newStops);
+    };
+
+    const _addStop = () => {
+      const sorted2 = [...stops].sort((a, b) => a.pos - b.pos);
+      const lastPos = sorted2[sorted2.length - 1]?.pos || 0;
+      const newPos  = Math.min(lastPos + 10, unit === "°C" ? 60 : 100);
+      this._set(stopsKey, [...stops, { pos: newPos, color: "#94a3b8" }]);
+    };
+
+    const _resetDefaults = () => {
+      this._set(stopsKey, JSON.parse(JSON.stringify(defaults)));
+    };
+
+    return html`
+      <div class="gradient-bar" style="background:${gradientBar}"></div>
+      ${stops.map((stop, idx) => html`
+        <div class="stop-row">
+          <div class="stop-dot" style="background:${stop.color}"></div>
+          <input class="ed-input stop-val-input" type="number"
+            .value="${stop.pos}"
+            @input="${(e) => _updateStop(idx, "pos", e.target.value)}" />
+          <span class="stop-unit-lbl">${unit}</span>
+          <span class="stop-arrow">→</span>
+          <div class="color-swatch-wrap">
+            <input type="color" class="color-swatch-input"
+              .value="${stop.color}"
+              @input="${(e) => _updateStop(idx, "color", e.target.value)}" />
+          </div>
+          <button class="btn-remove-sm"
+            ?disabled="${stops.length <= 2}"
+            @click="${() => _removeStop(idx)}">✕</button>
+        </div>
+      `)}
+      <div class="stop-actions">
+        <button class="btn-add sm" @click="${_addStop}">+ Add stop</button>
+        <button class="btn-reset" @click="${_resetDefaults}">↺ Reset defaults</button>
+      </div>
+    `;
+  }
+
   // ── TAB: General ─────────────────────────────────────────────────────────────
 
   _tabGeneral() {
@@ -1247,9 +1215,8 @@ class RoomCardEditor extends LitElement {
       <div class="section">
         <div class="section-title">Climate / Environment Sensors</div>
         <p class="hint">
-          Displayed side-by-side. Gauge color is <strong>automatic</strong> based on sensor type —
-          temperature uses a severity gradient (blue→green→yellow→red),
-          humidity is fixed blue. No color configuration needed.
+          Displayed side-by-side. Arc and value colors are interpolated from your configured
+          color stops below. Sensor type (temperature / humidity / etc.) is auto-detected.
         </p>
         ${items.map((s, i) => html`
           <div class="list-item">
@@ -1277,6 +1244,29 @@ class RoomCardEditor extends LitElement {
           @click="${() => this._addItem("climate_sensors", {
             entity: "", label: "", unit: "", min: 0, max: 50
           })}">+ Add Climate Sensor</button>
+      </div>
+    `;
+  }
+
+  // ── TAB: Colors ───────────────────────────────────────────────────────────────
+
+  _tabColors() {
+    return html`
+      <div class="section">
+        <div class="section-title">Temperature Color Stops</div>
+        <p class="hint">
+          Enter a °C value and pick a color for each stop. The arc and value text
+          interpolate smoothly between stops. Minimum 2 stops required.
+        </p>
+        ${this._renderColorStops("temp_color_stops", "°C", DEFAULT_TEMP_STOPS)}
+      </div>
+      <div class="section">
+        <div class="section-title">Humidity Color Stops</div>
+        <p class="hint">
+          Enter a % value and pick a color for each stop. Default: orange (dry) →
+          green (normal 40–60%) → red (humid).
+        </p>
+        ${this._renderColorStops("hum_color_stops", "%", DEFAULT_HUM_STOPS)}
       </div>
     `;
   }
@@ -1400,7 +1390,7 @@ class RoomCardEditor extends LitElement {
     `;
   }
 
-  // ── TAB: Power ──────────────────────────────────────────────────────────────
+  // ── TAB: Power ───────────────────────────────────────────────────────────────
 
   _tabPower() {
     const cfg = this._config;
@@ -1435,7 +1425,6 @@ class RoomCardEditor extends LitElement {
         <div class="section-title">Husqvarna Automower</div>
         <p class="hint">
           Displays state badge, battery bar and Start / Pause / Return to Dock controls.
-          The icon shows the accurate Automower shape with spinning wheels and blade when mowing.
         </p>
         ${this._toggle("Show Mower Widget", cfg.show_mower, (v) => this._set("show_mower", v))}
         ${cfg.show_mower ? html`
@@ -1457,6 +1446,7 @@ class RoomCardEditor extends LitElement {
     const tabs = [
       { id: "general",  label: "General"  },
       { id: "climate",  label: "Climate"  },
+      { id: "colors",   label: "Colors"   },
       { id: "sensors",  label: "Sensors"  },
       { id: "switches", label: "Switches" },
       { id: "power",    label: "Power"    },
@@ -1473,6 +1463,7 @@ class RoomCardEditor extends LitElement {
         <div class="tab-content">
           ${this._activeTab === "general"  ? this._tabGeneral()  : ""}
           ${this._activeTab === "climate"  ? this._tabClimate()  : ""}
+          ${this._activeTab === "colors"   ? this._tabColors()   : ""}
           ${this._activeTab === "sensors"  ? this._tabSensors()  : ""}
           ${this._activeTab === "switches" ? this._tabSwitches() : ""}
           ${this._activeTab === "power"    ? this._tabPower()    : ""}
@@ -1488,11 +1479,10 @@ class RoomCardEditor extends LitElement {
       .editor-root { display: flex; flex-direction: column; }
 
       .tab-bar { display: flex; flex-wrap: wrap; border-bottom: 1px solid rgba(0,0,0,0.15); background: var(--card-background-color, #1e293b); border-radius: 8px 8px 0 0; }
-      .tab-btn { flex: 1; min-width: 80px; padding: 8px 4px; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.04em; border: none; background: transparent; color: var(--secondary-text-color, #94a3b8); cursor: pointer; transition: background 0.15s, color 0.15s; text-transform: uppercase; }
+      .tab-btn { flex: 1; min-width: 60px; padding: 8px 4px; font-size: 0.68rem; font-weight: 600; letter-spacing: 0.04em; border: none; background: transparent; color: var(--secondary-text-color, #94a3b8); cursor: pointer; transition: background 0.15s, color 0.15s; text-transform: uppercase; }
       .tab-btn.active { color: var(--primary-color, #3b82f6); border-bottom: 2px solid var(--primary-color, #3b82f6); background: rgba(59,130,246,0.06); }
 
       .tab-content { padding: 12px 4px; display: flex; flex-direction: column; gap: 4px; }
-
       .section { margin-bottom: 10px; }
       .section-title { font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--primary-color, #3b82f6); margin-bottom: 8px; padding-bottom: 4px; border-bottom: 1px solid rgba(59,130,246,0.2); }
       .hint { font-size: 0.73rem; color: var(--secondary-text-color, #94a3b8); margin: 0 0 8px; line-height: 1.5; }
@@ -1538,18 +1528,26 @@ class RoomCardEditor extends LitElement {
       .btn-remove { padding: 3px 8px; font-size: 0.7rem; border: 1px solid #ef4444; border-radius: 4px; background: transparent; color: #ef4444; cursor: pointer; }
       .btn-remove:hover { background: rgba(239,68,68,0.1); }
       .btn-remove-sm { padding: 2px 5px; font-size: 0.68rem; border: 1px solid #ef4444; border-radius: 4px; background: transparent; color: #ef4444; cursor: pointer; flex-shrink: 0; }
+      .btn-remove-sm:disabled { opacity: 0.3; cursor: not-allowed; }
+
+      /* ── Color stop editor ── */
+      .gradient-bar { height: 10px; border-radius: 5px; margin-bottom: 10px; border: 1px solid var(--divider-color, #334155); }
+      .stop-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+      .stop-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; border: 1px solid rgba(255,255,255,0.15); }
+      .stop-val-input { width: 62px !important; flex: none !important; padding: 5px 7px !important; font-size: 0.78rem !important; }
+      .stop-unit-lbl { font-size: 0.72rem; color: var(--secondary-text-color, #64748b); flex-shrink: 0; width: 18px; }
+      .stop-arrow { font-size: 0.75rem; color: var(--secondary-text-color, #64748b); flex-shrink: 0; }
+      .color-swatch-wrap { width: 32px; height: 28px; border-radius: 5px; border: 1px solid var(--divider-color, #334155); overflow: hidden; flex-shrink: 0; }
+      .color-swatch-input { width: 200%; height: 200%; margin: -25%; border: none; cursor: pointer; padding: 0; }
+      .stop-actions { display: flex; gap: 8px; margin-top: 4px; }
+      .btn-reset { padding: 7px 10px; font-size: 0.72rem; font-weight: 600; border: 1px solid var(--divider-color, #334155); border-radius: 6px; background: transparent; color: var(--secondary-text-color, #94a3b8); cursor: pointer; }
+      .btn-reset:hover { background: rgba(255,255,255,0.05); }
     `;
   }
 }
 
 // ─────────────────────────────────────────────
-// ─────────────────────────────────────────────
 // CAMERA STREAM SUB-ELEMENT
-// Isolates ha-camera-stream from the parent card's render cycle.
-// Only reconfigures the stream when stateObj reference actually changes —
-// not on every clock tick or unrelated hass state update.
-// This fixes the show/disappear loop seen with IPC_566SD54MP cameras
-// when multiple cards with camera feeds are on the same dashboard.
 // ─────────────────────────────────────────────
 class RoomCardStream extends LitElement {
   static get properties() {
@@ -1570,11 +1568,9 @@ class RoomCardStream extends LitElement {
   }
 
   updated(changedProps) {
-    // Only touch ha-camera-stream when stateObj has actually changed
     if (!changedProps.has("stateObj") && !changedProps.has("hass")) return;
     const stream = this.shadowRoot.querySelector("ha-camera-stream");
     if (!stream) return;
-    // Guard: only reconfigure when stateObj reference changes
     if (stream._rcLastStateObj === this.stateObj && stream._rcLastHass === this.hass) return;
     stream._rcLastStateObj = this.stateObj;
     stream._rcLastHass     = this.hass;
@@ -1587,11 +1583,7 @@ class RoomCardStream extends LitElement {
     if (!this.stateObj) return html``;
     return html`
       <div class="stream-wrap" @click="${() => this._fireMoreInfo()}">
-        <ha-camera-stream
-          allow-exoplayer
-          muted
-          playsinline
-        ></ha-camera-stream>
+        <ha-camera-stream allow-exoplayer muted playsinline></ha-camera-stream>
         <div class="stream-overlay">
           <span class="stream-label">${(this.label || "").toUpperCase()}</span>
           <div class="stream-right">
@@ -1617,40 +1609,21 @@ class RoomCardStream extends LitElement {
   static get styles() {
     return css`
       :host { display: block; }
-      .stream-wrap {
-        position: relative; border-radius: 14px; overflow: hidden;
-        background: #0a0e1a; border: 1px solid rgba(255,255,255,0.08);
-      }
-      ha-camera-stream {
-        width: 100%; display: block;
-        max-height: 350px; object-fit: cover;
-        --video-border-radius: 0;
-      }
-      .stream-overlay {
-        position: absolute; bottom: 0; left: 0; right: 0;
-        padding: 8px 12px;
-        background: linear-gradient(transparent, rgba(0,0,0,0.6));
-        display: flex; justify-content: space-between; align-items: flex-end;
-      }
+      .stream-wrap { position: relative; border-radius: 14px; overflow: hidden; background: #0a0e1a; border: 1px solid rgba(255,255,255,0.08); }
+      ha-camera-stream { width: 100%; display: block; max-height: 350px; object-fit: cover; --video-border-radius: 0; }
+      .stream-overlay { position: absolute; bottom: 0; left: 0; right: 0; padding: 8px 12px; background: linear-gradient(transparent, rgba(0,0,0,0.6)); display: flex; justify-content: space-between; align-items: flex-end; }
       .stream-label { font-size: 10px; letter-spacing: 1px; color: rgba(255,255,255,0.5); text-transform: uppercase; }
-      .stream-live  { font-size: 9px;  letter-spacing: 1px; color: #f87171; font-weight: 600; border: 1px solid rgba(248,113,113,0.4); padding: 2px 6px; border-radius: 4px; }
+      .stream-live  { font-size: 9px; letter-spacing: 1px; color: #f87171; font-weight: 600; border: 1px solid rgba(248,113,113,0.4); padding: 2px 6px; border-radius: 4px; }
       .stream-right { display: flex; align-items: center; gap: 6px; }
       .stream-wrap  { cursor: pointer; }
-      .stream-fs-btn {
-        width: 26px; height: 26px; border-radius: 6px;
-        background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.18);
-        display: flex; align-items: center; justify-content: center;
-        cursor: pointer; color: rgba(255,255,255,0.75);
-        transition: background 0.2s; padding: 0;
-      }
+      .stream-fs-btn { width: 26px; height: 26px; border-radius: 6px; background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.18); display: flex; align-items: center; justify-content: center; cursor: pointer; color: rgba(255,255,255,0.75); transition: background 0.2s; padding: 0; }
       .stream-fs-btn:hover  { background: rgba(99,179,237,0.25); color: #fff; }
       .stream-fs-btn:active { transform: scale(0.92); }
     `;
   }
 }
 
-// REGISTER
-// ─────────────────────────────────────────────
+// ── REGISTER ──────────────────────────────────────────────────────────────────
 customElements.define("room-card-stream", RoomCardStream);
 customElements.define("room-card", RoomCard);
 customElements.define("room-card-editor", RoomCardEditor);
@@ -1659,13 +1632,13 @@ window.customCards = window.customCards || [];
 window.customCards.push({
   type: "room-card",
   name: "Room Card",
-  description: "Universal configurable room card — climate gauges, binary sensors, switches, optional camera.",
+  description: "Universal configurable room card — climate gauges with configurable color stops, binary sensors, switches, optional camera.",
   preview: true,
   documentationURL: "https://github.com/robman2026/room-card",
 });
 
 console.info(
-  "%c ROOM-CARD %c v1.4.0 ",
+  "%c ROOM-CARD %c v1.5.0 ",
   "color:white;background:#3b82f6;font-weight:bold;padding:2px 4px;border-radius:3px 0 0 3px;",
   "color:#3b82f6;background:#0f172a;font-weight:bold;padding:2px 4px;border-radius:0 3px 3px 0;"
 );
