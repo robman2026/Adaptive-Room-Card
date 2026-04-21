@@ -2,7 +2,7 @@
  * room-card.js
  * Universal Room Card for Home Assistant
  * GitHub: https://github.com/robman2026/room-card
- * Version: 1.4.0
+ * Version: 1.4.1
  *
  * Changelog v1.3.1:
  *  - Climate tiles: exact Kids Room card layout & behavior
@@ -17,6 +17,7 @@
  *    - Row gets motion-active class, icon pulses, state text fades
  *  - Binary sensors: configurable 1–4 column layout
  *  - Editor: searchable entity dropdowns, no climate color picker
+ *  - Fix bug with showing more infos on tap/click on entity
  */
 
 const LitElement = Object.getPrototypeOf(customElements.get("ha-panel-lovelace"));
