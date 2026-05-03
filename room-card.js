@@ -2,7 +2,7 @@
  * room-card.js
  * Universal Room Card for Home Assistant
  * GitHub: https://github.com/robman2026/room-card
- * Version: 1.5.0
+ * Version: 1.6.0
  *
  * Changelog v1.5.0:
  *  - Configurable color stops for temperature and humidity sensors
@@ -168,11 +168,33 @@ class RoomCard extends LitElement {
       power_current_entity: "",
       power_max_w: 3000,
       show_power: false,
+      frosted_glass: false,
+      frosted_opacity: 0.52,
+      frosted_blur: 22,
     };
   }
 
   set hass(hass) {
     this._hass = hass;
+  }
+
+  updated(changedProps) {
+    if (changedProps.has('_config')) {
+      this._applyFrostedVars();
+    }
+  }
+
+  _applyFrostedVars() {
+    const cfg = this._config;
+    if (cfg && cfg.frosted_glass) {
+      const opacity = Math.min(0.9, Math.max(0.1, parseFloat(cfg.frosted_opacity) || 0.52));
+      const blur    = Math.min(40,  Math.max(4,   parseFloat(cfg.frosted_blur)    || 22));
+      this.style.setProperty('--rc-fg-bg',  'rgba(8,14,30,' + opacity + ')');
+      this.style.setProperty('--rc-fg-blur', blur + 'px');
+    } else {
+      this.style.removeProperty('--rc-fg-bg');
+      this.style.removeProperty('--rc-fg-blur');
+    }
   }
 
   setConfig(config) {
@@ -199,6 +221,9 @@ class RoomCard extends LitElement {
       power_current_entity: "",
       power_max_w: 3000,
       show_power: false,
+      frosted_glass: false,
+      frosted_opacity: 0.52,
+      frosted_blur: 22,
       ...config,
     };
   }
@@ -708,7 +733,7 @@ class RoomCard extends LitElement {
 
     return html`
       <ha-card>
-        <div class="card">
+        <div class="${this._config.frosted_glass ? 'card card-frosted' : 'card'}">
           <div class="header">
             <div class="header-left">
               ${cfg.room_icon ? html`<ha-icon icon="${cfg.room_icon}" class="room-icon"></ha-icon>` : ""}
@@ -965,6 +990,74 @@ class RoomCard extends LitElement {
       @keyframes mow-spin-fast { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
       .mow-spin      { animation: mow-spin      1.8s linear infinite; }
       .mow-spin-fast { animation: mow-spin-fast 0.7s linear infinite; }
+
+      /* ── Frosted Glass (activated by .card-frosted) ── */
+      :host {
+        --rc-fg-bg: rgba(8,14,30,0.52);
+        --rc-fg-blur: 22px;
+      }
+      .card-frosted {
+        background: var(--rc-fg-bg) !important;
+        backdrop-filter: blur(var(--rc-fg-blur)) saturate(180%) !important;
+        -webkit-backdrop-filter: blur(var(--rc-fg-blur)) saturate(180%) !important;
+        border: 1px solid rgba(255,255,255,0.09) !important;
+        box-shadow: 0 8px 40px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.07) !important;
+      }
+      .card-frosted::before { display: none !important; }
+      /* Climate sensor tiles */
+      .card-frosted .sensor-tile {
+        background: rgba(255,255,255,0.05) !important;
+        backdrop-filter: blur(var(--rc-fg-blur)) !important;
+        -webkit-backdrop-filter: blur(var(--rc-fg-blur)) !important;
+        border-color: rgba(255,255,255,0.1) !important;
+      }
+      .card-frosted .sensor-tile:hover { background: rgba(255,255,255,0.09) !important; }
+      /* Camera container */
+      .card-frosted .camera-container {
+        background: rgba(5,10,22,0.55) !important;
+        backdrop-filter: blur(var(--rc-fg-blur)) !important;
+        -webkit-backdrop-filter: blur(var(--rc-fg-blur)) !important;
+        border-color: rgba(255,255,255,0.1) !important;
+      }
+      /* Sensors list */
+      .card-frosted .sensors-list {
+        background: rgba(255,255,255,0.04) !important;
+        backdrop-filter: blur(var(--rc-fg-blur)) !important;
+        -webkit-backdrop-filter: blur(var(--rc-fg-blur)) !important;
+        border-color: rgba(255,255,255,0.09) !important;
+      }
+      /* Compact sensor tiles (grid mode) */
+      .card-frosted .sensor-tile-compact {
+        background: rgba(255,255,255,0.05) !important;
+        backdrop-filter: blur(var(--rc-fg-blur)) !important;
+        -webkit-backdrop-filter: blur(var(--rc-fg-blur)) !important;
+        border-color: rgba(255,255,255,0.1) !important;
+      }
+      /* Light buttons */
+      .card-frosted .light-btn {
+        background: rgba(255,255,255,0.05) !important;
+        backdrop-filter: blur(var(--rc-fg-blur)) !important;
+        -webkit-backdrop-filter: blur(var(--rc-fg-blur)) !important;
+        border-color: rgba(255,255,255,0.1) !important;
+      }
+      .card-frosted .light-btn.on {
+        background: rgba(251,191,36,0.1) !important;
+        border-color: rgba(251,191,36,0.28) !important;
+      }
+      /* Power tile */
+      .card-frosted .power-tile {
+        background: rgba(255,255,255,0.05) !important;
+        backdrop-filter: blur(var(--rc-fg-blur)) !important;
+        -webkit-backdrop-filter: blur(var(--rc-fg-blur)) !important;
+        border-color: rgba(255,255,255,0.1) !important;
+      }
+      /* Mower tile */
+      .card-frosted .mower-tile {
+        background: rgba(255,255,255,0.05) !important;
+        backdrop-filter: blur(var(--rc-fg-blur)) !important;
+        -webkit-backdrop-filter: blur(var(--rc-fg-blur)) !important;
+        border-color: rgba(255,255,255,0.1) !important;
+      }
     `;
   }
 }
@@ -1441,16 +1534,59 @@ class RoomCardEditor extends LitElement {
     `;
   }
 
+  // ── TAB: Appearance ──────────────────────────────────────────────────────────
+
+  _tabAppearance() {
+    const cfg = this._config;
+    return html`
+      <div class="section">
+        <div class="section-title">🎨 Frosted Glass Dark Mode</div>
+        ${this._toggle("Frosted Glass Mode", cfg.frosted_glass, (v) => this._set("frosted_glass", v))}
+        ${cfg.frosted_glass ? html`
+          <p class="hint">
+            The card background and all inner tiles use a translucent blur effect.
+            Works best when a dynamic wallpaper is visible behind Home Assistant.
+          </p>
+          <label class="ed-label">Glass Opacity</label>
+          <div class="range-row">
+            <input class="ed-range" type="range" min="0.1" max="0.9" step="0.01"
+              .value="${String(cfg.frosted_opacity || 0.52)}"
+              style="--rp:${Math.round(((cfg.frosted_opacity || 0.52) - 0.1) / 0.8 * 100)}%"
+              @input="${(e) => {
+                const v = parseFloat(e.target.value);
+                e.target.style.setProperty('--rp', Math.round((v - 0.1) / 0.8 * 100) + '%');
+                this._set('frosted_opacity', v);
+              }}" />
+            <span class="range-val">${(cfg.frosted_opacity || 0.52).toFixed(2)}</span>
+          </div>
+          <label class="ed-label">Blur Strength</label>
+          <div class="range-row">
+            <input class="ed-range" type="range" min="4" max="40" step="1"
+              .value="${String(cfg.frosted_blur || 22)}"
+              style="--rp:${Math.round(((cfg.frosted_blur || 22) - 4) / 36 * 100)}%"
+              @input="${(e) => {
+                const v = parseInt(e.target.value);
+                e.target.style.setProperty('--rp', Math.round((v - 4) / 36 * 100) + '%');
+                this._set('frosted_blur', v);
+              }}" />
+            <span class="range-val">${cfg.frosted_blur || 22}px</span>
+          </div>
+        ` : ""}
+      </div>
+    `;
+  }
+
   render() {
     if (!this._config) return html``;
     const tabs = [
-      { id: "general",  label: "General"  },
-      { id: "climate",  label: "Climate"  },
-      { id: "colors",   label: "Colors"   },
-      { id: "sensors",  label: "Sensors"  },
-      { id: "switches", label: "Switches" },
-      { id: "power",    label: "Power"    },
-      { id: "mower",    label: "Mower"    },
+      { id: "general",    label: "General"    },
+      { id: "appearance", label: "Appearance" },
+      { id: "climate",    label: "Climate"    },
+      { id: "colors",     label: "Colors"     },
+      { id: "sensors",    label: "Sensors"    },
+      { id: "switches",   label: "Switches"   },
+      { id: "power",      label: "Power"      },
+      { id: "mower",      label: "Mower"      },
     ];
     return html`
       <div class="editor-root">
@@ -1461,13 +1597,14 @@ class RoomCardEditor extends LitElement {
           `)}
         </div>
         <div class="tab-content">
-          ${this._activeTab === "general"  ? this._tabGeneral()  : ""}
-          ${this._activeTab === "climate"  ? this._tabClimate()  : ""}
-          ${this._activeTab === "colors"   ? this._tabColors()   : ""}
-          ${this._activeTab === "sensors"  ? this._tabSensors()  : ""}
-          ${this._activeTab === "switches" ? this._tabSwitches() : ""}
-          ${this._activeTab === "power"    ? this._tabPower()    : ""}
-          ${this._activeTab === "mower"    ? this._tabMower()    : ""}
+          ${this._activeTab === "general"    ? this._tabGeneral()    : ""}
+          ${this._activeTab === "appearance" ? this._tabAppearance() : ""}
+          ${this._activeTab === "climate"    ? this._tabClimate()    : ""}
+          ${this._activeTab === "colors"     ? this._tabColors()     : ""}
+          ${this._activeTab === "sensors"    ? this._tabSensors()    : ""}
+          ${this._activeTab === "switches"   ? this._tabSwitches()   : ""}
+          ${this._activeTab === "power"      ? this._tabPower()      : ""}
+          ${this._activeTab === "mower"      ? this._tabMower()      : ""}
         </div>
       </div>
     `;
@@ -1542,6 +1679,28 @@ class RoomCardEditor extends LitElement {
       .stop-actions { display: flex; gap: 8px; margin-top: 4px; }
       .btn-reset { padding: 7px 10px; font-size: 0.72rem; font-weight: 600; border: 1px solid var(--divider-color, #334155); border-radius: 6px; background: transparent; color: var(--secondary-text-color, #94a3b8); cursor: pointer; }
       .btn-reset:hover { background: rgba(255,255,255,0.05); }
+
+      /* Range slider */
+      .range-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+      .range-val { font-size: 0.72rem; font-weight: 600; color: var(--primary-color, #3b82f6); font-family: monospace; min-width: 38px; text-align: right; flex-shrink: 0; }
+      .ed-range {
+        -webkit-appearance: none; flex: 1; height: 4px; border-radius: 2px; outline: none; cursor: pointer;
+        background: linear-gradient(
+          to right,
+          var(--primary-color, #3b82f6) 0%,
+          var(--primary-color, #3b82f6) var(--rp, 50%),
+          var(--divider-color, #334155) var(--rp, 50%),
+          var(--divider-color, #334155) 100%
+        );
+      }
+      .ed-range::-webkit-slider-thumb {
+        -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%;
+        background: #fff; box-shadow: 0 0 0 3px rgba(59,130,246,.4); cursor: pointer;
+      }
+      .ed-range::-moz-range-thumb {
+        width: 16px; height: 16px; border-radius: 50%; border: none;
+        background: #fff; box-shadow: 0 0 0 3px rgba(59,130,246,.4); cursor: pointer;
+      }
     `;
   }
 }
@@ -1638,7 +1797,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c ROOM-CARD %c v1.5.0 ",
+  "%c ROOM-CARD %c v1.6.0 ",
   "color:white;background:#3b82f6;font-weight:bold;padding:2px 4px;border-radius:3px 0 0 3px;",
   "color:#3b82f6;background:#0f172a;font-weight:bold;padding:2px 4px;border-radius:0 3px 3px 0;"
 );
