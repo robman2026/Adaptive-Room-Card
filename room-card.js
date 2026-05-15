@@ -1110,17 +1110,17 @@ class RoomCardEditor extends LitElement {
     this._set(listKey, list);
   }
 
-  // ── Native HA entity picker ───────────────────────────────────────────────────
+  // ── Native HA entity selector ────────────────────────────────────────────────
 
   _renderEntityPicker(currentValue, onChange, domains) {
+    const selector = { entity: domains && domains.length ? { domain: domains } : null };
     return html`
-      <ha-entity-picker
+      <ha-selector
         .hass="${this.hass}"
+        .selector="${selector}"
         .value="${currentValue || ""}"
-        .includeDomains="${domains && domains.length ? domains : undefined}"
-        allow-custom-entity
         @value-changed="${(e) => onChange(e.detail.value)}"
-      ></ha-entity-picker>
+      ></ha-selector>
     `;
   }
 
@@ -1591,7 +1591,7 @@ class RoomCardEditor extends LitElement {
       .ed-select { width: 100%; padding: 7px 10px; font-size: 0.82rem; border: 1px solid var(--divider-color, #334155); border-radius: 6px; background: var(--secondary-background-color, #0f172a); color: var(--primary-text-color, #e2e8f0); box-sizing: border-box; cursor: pointer; margin-top: 4px; }
       .inline-select { width: auto; min-width: 64px; padding: 4px 8px; margin-top: 0; }
 
-      ha-entity-picker { display: block; margin-bottom: 4px; }
+      ha-selector { display: block; margin-bottom: 4px; }
 
       .toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; gap: 8px; }
       .toggle-wrap { position: relative; display: inline-block; width: 40px; height: 22px; flex-shrink: 0; }
