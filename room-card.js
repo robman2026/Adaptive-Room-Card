@@ -1129,8 +1129,25 @@ class RoomCardEditor extends LitElement {
   _txt(label, value, onChange, placeholder) {
     return html`
       <label class="ed-label">${label}</label>
-      <input class="ed-input" type="text" .value="${value || ""}" placeholder="${placeholder || ""}"
-        @input="${(e) => onChange(e.target.value)}" />
+      <ha-selector
+        .hass="${this.hass}"
+        .selector="${{ text: {} }}"
+        .value="${value || ""}"
+        .placeholder="${placeholder || ""}"
+        @value-changed="${(e) => onChange(e.detail.value)}"
+      ></ha-selector>
+    `;
+  }
+
+  _iconSelect(label, value, onChange) {
+    return html`
+      <label class="ed-label">${label}</label>
+      <ha-selector
+        .hass="${this.hass}"
+        .selector="${{ icon: {} }}"
+        .value="${value || ""}"
+        @value-changed="${(e) => onChange(e.detail.value)}"
+      ></ha-selector>
     `;
   }
 
@@ -1244,7 +1261,7 @@ class RoomCardEditor extends LitElement {
       <div class="section">
         <div class="section-title">Room Identity</div>
         ${this._txt("Room Name", cfg.room_name, (v) => this._set("room_name", v), "e.g. Living Room")}
-        ${this._txt("Room Icon (mdi:...)", cfg.room_icon, (v) => this._set("room_icon", v), "e.g. mdi:sofa")}
+        ${this._iconSelect("Room Icon", cfg.room_icon, (v) => this._set("room_icon", v))}
       </div>
       <div class="section">
         <div class="section-title">Header Options</div>
@@ -1365,8 +1382,8 @@ class RoomCardEditor extends LitElement {
                   ["binary_sensor", "sensor", "input_boolean", "device_tracker"])}
               ${this._txt("Display Label", s.label,
                   (v) => this._updateItem("binary_sensors", i, "label", v), "e.g. Window Left")}
-              ${this._txt("Icon (mdi:...) — not used for motion sensors", s.icon,
-                  (v) => this._updateItem("binary_sensors", i, "icon", v), "e.g. mdi:window-open")}
+              ${this._iconSelect("Icon — not used for motion sensors", s.icon,
+                  (v) => this._updateItem("binary_sensors", i, "icon", v))}
               <div class="state-map-title">State Display Map</div>
               ${stateEntries.map(([state, disp]) => html`
                 <div class="state-map-row">
@@ -1433,8 +1450,8 @@ class RoomCardEditor extends LitElement {
                 ["switch", "light", "input_boolean", "fan", "automation"])}
             ${this._txt("Display Label", s.label,
                 (v) => this._updateItem("switches", i, "label", v), "e.g. Ceiling Light")}
-            ${this._txt("Icon (mdi:...)", s.icon,
-                (v) => this._updateItem("switches", i, "icon", v), "e.g. mdi:lightbulb")}
+            ${this._iconSelect("Icon", s.icon,
+                (v) => this._updateItem("switches", i, "icon", v))}
             ${this._colorPick("Active Color", s.color,
                 (v) => this._updateItem("switches", i, "color", v))}
           </div>
