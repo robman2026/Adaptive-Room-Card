@@ -1071,19 +1071,16 @@ class RoomCardEditor extends LitElement {
       hass:       {},
       _config:    { state: true },
       _activeTab: { state: true },
-      _search:    { state: true },
     };
   }
 
   constructor() {
     super();
     this._activeTab = "general";
-    this._search    = {};
   }
 
   setConfig(config) {
     this._config = JSON.parse(JSON.stringify(config));
-    this._search = {};
   }
 
   _fire(config) {
@@ -1095,13 +1092,6 @@ class RoomCardEditor extends LitElement {
   _set(key, value) {
     this._config = { ...this._config, [key]: value };
     this._fire(this._config);
-  }
-
-  _entities(...domains) {
-    if (!this.hass) return [];
-    return Object.keys(this.hass.states)
-      .filter((id) => !domains.length || domains.some((d) => id.startsWith(d + ".")))
-      .sort();
   }
 
   _addItem(listKey, defaults) {
@@ -1120,39 +1110,17 @@ class RoomCardEditor extends LitElement {
     this._set(listKey, list);
   }
 
-  // ── Searchable entity selector ────────────────────────────────────────────────
+  // ── Native HA entity picker ───────────────────────────────────────────────────
 
-  _renderEntitySearch(searchKey, currentValue, onChange, domains, placeholder) {
-    const base     = domains && domains.length ? this._entities(...domains) : this._entities();
-    const query    = (this._search[searchKey] || "").toLowerCase().trim();
-    const filtered = query ? base.filter((e) => e.toLowerCase().includes(query)) : base;
-
-    const friendlyLabel = (eid) => {
-      if (!this.hass) return eid;
-      const fn = this.hass.states[eid]?.attributes?.friendly_name;
-      return fn ? `${fn}  (${eid})` : eid;
-    };
-
+  _renderEntityPicker(currentValue, onChange, domains) {
     return html`
-      <div class="search-select-wrap">
-        <input class="ed-input search-input" type="text"
-          placeholder="🔍 Search entities..."
-          .value="${this._search[searchKey] || ""}"
-          @input="${(e) => { this._search = { ...this._search, [searchKey]: e.target.value }; }}" />
-        <select class="ed-select"
-          .value="${currentValue || ""}"
-          @change="${(e) => {
-            onChange(e.target.value);
-            this._search = { ...this._search, [searchKey]: "" };
-          }}">
-          <option value="">${placeholder || "— select entity —"}</option>
-          ${filtered.slice(0, 200).map((eid) => html`
-            <option value="${eid}" ?selected="${eid === currentValue}">${friendlyLabel(eid)}</option>
-          `)}
-          ${filtered.length > 200 ? html`<option disabled>…${filtered.length - 200} more — refine search</option>` : ""}
-        </select>
-        ${currentValue ? html`<div class="selected-badge">${currentValue}</div>` : ""}
-      </div>
+      <ha-entity-picker
+        .hass="${this.hass}"
+        .value="${currentValue || ""}"
+        .includeDomains="${domains && domains.length ? domains : undefined}"
+        allow-custom-entity
+        @value-changed="${(e) => onChange(e.detail.value)}"
+      ></ha-entity-picker>
     `;
   }
 
@@ -1284,8 +1252,7 @@ class RoomCardEditor extends LitElement {
         ${this._toggle("Show Status Dot", cfg.show_status_dot, (v) => this._set("show_status_dot", v))}
         ${cfg.show_status_dot ? html`
           <label class="ed-label">Status Entity (optional)</label>
-          ${this._renderEntitySearch("status_entity", cfg.status_entity,
-              (v) => this._set("status_entity", v), [], "— auto online if empty —")}
+          ${this._renderEntityPicker(cfg.status_entity, (v) => this._set("status_entity", v), [])}
         ` : ""}
       </div>
       <div class="section">
@@ -1293,8 +1260,7 @@ class RoomCardEditor extends LitElement {
         ${this._toggle("Show Camera Feed", cfg.show_camera, (v) => this._set("show_camera", v))}
         ${cfg.show_camera ? html`
           <label class="ed-label">Camera Entity</label>
-          ${this._renderEntitySearch("camera_entity", cfg.camera_entity,
-              (v) => this._set("camera_entity", v), ["camera"], "— select camera —")}
+          ${this._renderEntityPicker(cfg.camera_entity, (v) => this._set("camera_entity", v), ["camera"])}
         ` : ""}
       </div>
     `;
@@ -1318,9 +1284,9 @@ class RoomCardEditor extends LitElement {
               <button class="btn-remove" @click="${() => this._removeItem("climate_sensors", i)}">Remove</button>
             </div>
             <label class="ed-label">Entity</label>
-            ${this._renderEntitySearch(`climate_${i}`, s.entity,
+            ${this._renderEntityPicker(s.entity,
                 (v) => this._updateItem("climate_sensors", i, "entity", v),
-                ["sensor"], "— select sensor —")}
+                ["sensor"])}
             ${this._txt("Display Label", s.label,
                 (v) => this._updateItem("climate_sensors", i, "label", v), "e.g. Temperature")}
             ${this._txt("Unit Override", s.unit,
@@ -1394,10 +1360,9 @@ class RoomCardEditor extends LitElement {
                 <button class="btn-remove" @click="${() => this._removeItem("binary_sensors", i)}">Remove</button>
               </div>
               <label class="ed-label">Entity</label>
-              ${this._renderEntitySearch(`sensor_${i}`, s.entity,
+              ${this._renderEntityPicker(s.entity,
                   (v) => this._updateItem("binary_sensors", i, "entity", v),
-                  ["binary_sensor", "sensor", "input_boolean", "device_tracker"],
-                  "— select sensor —")}
+                  ["binary_sensor", "sensor", "input_boolean", "device_tracker"])}
               ${this._txt("Display Label", s.label,
                   (v) => this._updateItem("binary_sensors", i, "label", v), "e.g. Window Left")}
               ${this._txt("Icon (mdi:...) — not used for motion sensors", s.icon,
@@ -1463,10 +1428,9 @@ class RoomCardEditor extends LitElement {
               <button class="btn-remove" @click="${() => this._removeItem("switches", i)}">Remove</button>
             </div>
             <label class="ed-label">Entity</label>
-            ${this._renderEntitySearch(`switch_${i}`, s.entity,
+            ${this._renderEntityPicker(s.entity,
                 (v) => this._updateItem("switches", i, "entity", v),
-                ["switch", "light", "input_boolean", "fan", "automation"],
-                "— select entity —")}
+                ["switch", "light", "input_boolean", "fan", "automation"])}
             ${this._txt("Display Label", s.label,
                 (v) => this._updateItem("switches", i, "label", v), "e.g. Ceiling Light")}
             ${this._txt("Icon (mdi:...)", s.icon,
@@ -1494,14 +1458,11 @@ class RoomCardEditor extends LitElement {
         ${this._toggle("Show Power Gauge", cfg.show_power, (v) => this._set("show_power", v))}
         ${cfg.show_power ? html`
           <label class="ed-label">Power Sensor (W) — required</label>
-          ${this._renderEntitySearch("power_entity", cfg.power_entity,
-              (v) => this._set("power_entity", v), ["sensor"], "— select power sensor —")}
+          ${this._renderEntityPicker(cfg.power_entity, (v) => this._set("power_entity", v), ["sensor"])}
           <label class="ed-label">Energy Sensor (kWh) — optional</label>
-          ${this._renderEntitySearch("power_energy_entity", cfg.power_energy_entity,
-              (v) => this._set("power_energy_entity", v), ["sensor"], "— select energy sensor —")}
+          ${this._renderEntityPicker(cfg.power_energy_entity, (v) => this._set("power_energy_entity", v), ["sensor"])}
           <label class="ed-label">Current Sensor (A) — optional</label>
-          ${this._renderEntitySearch("power_current_entity", cfg.power_current_entity,
-              (v) => this._set("power_current_entity", v), ["sensor"], "— select current sensor —")}
+          ${this._renderEntityPicker(cfg.power_current_entity, (v) => this._set("power_current_entity", v), ["sensor"])}
           ${this._txt("Max Wattage (W)", cfg.power_max_w !== undefined ? String(cfg.power_max_w) : "3000",
               (v) => this._set("power_max_w", parseFloat(v) || 3000), "e.g. 3000")}
         ` : ""}
@@ -1522,11 +1483,9 @@ class RoomCardEditor extends LitElement {
         ${this._toggle("Show Mower Widget", cfg.show_mower, (v) => this._set("show_mower", v))}
         ${cfg.show_mower ? html`
           <label class="ed-label">Mower Entity (lawn_mower.*) — required</label>
-          ${this._renderEntitySearch("mower_entity", cfg.mower_entity,
-              (v) => this._set("mower_entity", v), ["lawn_mower"], "— select mower —")}
+          ${this._renderEntityPicker(cfg.mower_entity, (v) => this._set("mower_entity", v), ["lawn_mower"])}
           <label class="ed-label">Battery Sensor (sensor.*) — optional</label>
-          ${this._renderEntitySearch("mower_battery_entity", cfg.mower_battery_entity,
-              (v) => this._set("mower_battery_entity", v), ["sensor"], "— select battery sensor —")}
+          ${this._renderEntityPicker(cfg.mower_battery_entity, (v) => this._set("mower_battery_entity", v), ["sensor"])}
           ${this._txt("Display Name", cfg.mower_name,
               (v) => this._set("mower_name", v), "e.g. Husqvarna Automower")}
         ` : ""}
@@ -1632,9 +1591,7 @@ class RoomCardEditor extends LitElement {
       .ed-select { width: 100%; padding: 7px 10px; font-size: 0.82rem; border: 1px solid var(--divider-color, #334155); border-radius: 6px; background: var(--secondary-background-color, #0f172a); color: var(--primary-text-color, #e2e8f0); box-sizing: border-box; cursor: pointer; margin-top: 4px; }
       .inline-select { width: auto; min-width: 64px; padding: 4px 8px; margin-top: 0; }
 
-      .search-select-wrap { display: flex; flex-direction: column; gap: 4px; margin-bottom: 4px; }
-      .search-input { margin-bottom: 0; font-size: 0.8rem; }
-      .selected-badge { font-size: 0.67rem; color: var(--primary-color, #3b82f6); background: rgba(59,130,246,0.1); border-radius: 4px; padding: 2px 6px; word-break: break-all; }
+      ha-entity-picker { display: block; margin-bottom: 4px; }
 
       .toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; gap: 8px; }
       .toggle-wrap { position: relative; display: inline-block; width: 40px; height: 22px; flex-shrink: 0; }
