@@ -1068,15 +1068,15 @@ class RoomCard extends LitElement {
 class RoomCardEditor extends LitElement {
   static get properties() {
     return {
-      hass:       {},
-      _config:    { state: true },
-      _activeTab: { state: true },
+      hass:          {},
+      _config:       { state: true },
+      _openSections: { state: true },
     };
   }
 
   constructor() {
     super();
-    this._activeTab = "general";
+    this._openSections = new Set(["general"]);
   }
 
   setConfig(config) {
@@ -1554,34 +1554,39 @@ class RoomCardEditor extends LitElement {
 
   render() {
     if (!this._config) return html``;
-    const tabs = [
-      { id: "general",    label: "General"    },
-      { id: "appearance", label: "Appearance" },
-      { id: "climate",    label: "Climate"    },
-      { id: "colors",     label: "Colors"     },
-      { id: "sensors",    label: "Sensors"    },
-      { id: "switches",   label: "Switches"   },
-      { id: "power",      label: "Power"      },
-      { id: "mower",      label: "Mower"      },
+
+    const sections = [
+      { id: "general",    label: "General",    icon: "mdi:home-outline",       render: () => this._tabGeneral()    },
+      { id: "appearance", label: "Appearance", icon: "mdi:palette-outline",    render: () => this._tabAppearance() },
+      { id: "climate",    label: "Climate",    icon: "mdi:thermometer",        render: () => this._tabClimate()    },
+      { id: "colors",     label: "Colors",     icon: "mdi:palette-swatch",     render: () => this._tabColors()     },
+      { id: "sensors",    label: "Sensors",    icon: "mdi:motion-sensor",      render: () => this._tabSensors()    },
+      { id: "switches",   label: "Switches",   icon: "mdi:toggle-switch",      render: () => this._tabSwitches()   },
+      { id: "power",      label: "Power",      icon: "mdi:flash-outline",      render: () => this._tabPower()      },
+      { id: "mower",      label: "Mower",      icon: "mdi:robot-mower-outline", render: () => this._tabMower()     },
     ];
+
+    const toggle = (id) => {
+      const next = new Set(this._openSections);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      this._openSections = next;
+    };
+
     return html`
       <div class="editor-root">
-        <div class="tab-bar">
-          ${tabs.map((t) => html`
-            <button class="tab-btn ${this._activeTab === t.id ? "active" : ""}"
-              @click="${() => (this._activeTab = t.id)}">${t.label}</button>
-          `)}
-        </div>
-        <div class="tab-content">
-          ${this._activeTab === "general"    ? this._tabGeneral()    : ""}
-          ${this._activeTab === "appearance" ? this._tabAppearance() : ""}
-          ${this._activeTab === "climate"    ? this._tabClimate()    : ""}
-          ${this._activeTab === "colors"     ? this._tabColors()     : ""}
-          ${this._activeTab === "sensors"    ? this._tabSensors()    : ""}
-          ${this._activeTab === "switches"   ? this._tabSwitches()   : ""}
-          ${this._activeTab === "power"      ? this._tabPower()      : ""}
-          ${this._activeTab === "mower"      ? this._tabMower()      : ""}
-        </div>
+        ${sections.map(({ id, label, icon, render }) => {
+          const open = this._openSections.has(id);
+          return html`
+            <div class="acc-item ${open ? "open" : ""}">
+              <button class="acc-header" @click="${() => toggle(id)}">
+                <ha-icon icon="${icon}" class="acc-icon"></ha-icon>
+                <span class="acc-label">${label}</span>
+                <ha-icon icon="${open ? "mdi:chevron-up" : "mdi:chevron-down"}" class="acc-chevron"></ha-icon>
+              </button>
+              ${open ? html`<div class="acc-body">${render()}</div>` : ""}
+            </div>
+          `;
+        })}
       </div>
     `;
   }
@@ -1589,15 +1594,20 @@ class RoomCardEditor extends LitElement {
   static get styles() {
     return css`
       :host { display: block; font-family: 'Segoe UI', sans-serif; }
-      .editor-root { display: flex; flex-direction: column; }
+      .editor-root { display: flex; flex-direction: column; gap: 6px; padding: 4px 0; }
 
-      .tab-bar { display: flex; flex-wrap: wrap; border-bottom: 1px solid rgba(0,0,0,0.15); background: var(--card-background-color, #1e293b); border-radius: 8px 8px 0 0; }
-      .tab-btn { flex: 1; min-width: 60px; padding: 8px 4px; font-size: 0.68rem; font-weight: 600; letter-spacing: 0.04em; border: none; background: transparent; color: var(--secondary-text-color, #94a3b8); cursor: pointer; transition: background 0.15s, color 0.15s; text-transform: uppercase; }
-      .tab-btn.active { color: var(--primary-color, #3b82f6); border-bottom: 2px solid var(--primary-color, #3b82f6); background: rgba(59,130,246,0.06); }
+      /* Accordion */
+      .acc-item { border: 1px solid var(--divider-color, #334155); border-radius: 10px; overflow: hidden; }
+      .acc-header { display: flex; align-items: center; gap: 10px; width: 100%; padding: 11px 14px; background: var(--secondary-background-color, #1e293b); border: none; cursor: pointer; color: var(--primary-text-color, #e2e8f0); text-align: left; transition: background 0.15s; }
+      .acc-header:hover { background: rgba(59,130,246,0.07); }
+      .acc-item.open > .acc-header { background: rgba(59,130,246,0.10); border-bottom: 1px solid var(--divider-color, #334155); }
+      .acc-icon { --mdc-icon-size: 18px; color: var(--primary-color, #3b82f6); flex-shrink: 0; }
+      .acc-label { flex: 1; font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; }
+      .acc-chevron { --mdc-icon-size: 18px; color: var(--secondary-text-color, #94a3b8); flex-shrink: 0; }
+      .acc-body { padding: 12px 12px 6px; display: flex; flex-direction: column; gap: 4px; }
 
-      .tab-content { padding: 12px 4px; display: flex; flex-direction: column; gap: 4px; }
       .section { margin-bottom: 10px; }
-      .section-title { font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--primary-color, #3b82f6); margin-bottom: 8px; padding-bottom: 4px; border-bottom: 1px solid rgba(59,130,246,0.2); }
+      .section-title { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--secondary-text-color, #94a3b8); margin-bottom: 8px; padding-bottom: 4px; border-bottom: 1px solid var(--divider-color, #334155); }
       .hint { font-size: 0.73rem; color: var(--secondary-text-color, #94a3b8); margin: 0 0 8px; line-height: 1.5; }
 
       .ed-label { display: block; font-size: 0.72rem; font-weight: 600; color: var(--secondary-text-color, #64748b); margin-bottom: 3px; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.05em; }
