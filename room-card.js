@@ -157,6 +157,9 @@ class RoomCard extends LitElement {
       binary_sensors: [],
       sensor_columns: 1,
       switches: [],
+      lights: [],
+      lights_label: "Lights",
+      lights_columns: 4,
       camera_entity: "",
       show_camera: false,
       mower_entity: "",
@@ -210,6 +213,9 @@ class RoomCard extends LitElement {
       binary_sensors: [],
       sensor_columns: 1,
       switches: [],
+      lights: [],
+      lights_label: "Lights",
+      lights_columns: 4,
       camera_entity: "",
       show_camera: false,
       mower_entity: "",
@@ -480,6 +486,101 @@ class RoomCard extends LitElement {
     const domain = entityId.split(".")[0];
     if (!["switch", "light", "input_boolean", "fan", "automation", "script"].includes(domain)) return;
     this._hass.callService(domain, currentState === "on" ? "turn_off" : "turn_on", { entity_id: entityId });
+  }
+
+  // ── Lights section ───────────────────────────────────────────────────────────
+
+  _renderLights() {
+    const cfg    = this._config;
+    const lights = cfg.lights || [];
+    if (!lights.length) return "";
+    const cols  = Math.max(1, Math.min(4, parseInt(cfg.lights_columns) || 4));
+    const label = cfg.lights_label || "Lights";
+    return html`
+      <div class="lights-section">
+        <div class="lights-section-header">
+          <span class="lights-dot"></span>${label.toUpperCase()}
+        </div>
+        <div class="lights-grid" style="--lt-cols:${cols}">
+          ${lights.map((lt) => this._renderLightTile(lt))}
+        </div>
+      </div>
+    `;
+  }
+
+  _renderLightTile(lt) {
+    const stateObj   = this._stateOf(lt.entity);
+    const isOn       = stateObj?.state === "on";
+    const brightness = stateObj?.attributes?.brightness;
+    const pct        = isOn && brightness != null ? Math.round(brightness / 255 * 100) : null;
+    const name       = lt.label || this._friendlyName(lt.entity) || lt.entity;
+    const icon       = lt.icon || (isOn ? "mdi:lightbulb" : "mdi:lightbulb-outline");
+
+    const handlers = lt.dimmable
+      ? {
+          "@pointerdown": (e) => this._ltDown(e, lt, stateObj),
+          "@pointermove":  (e) => this._ltMove(e),
+          "@pointerup":    (e) => this._ltUp(e, lt, stateObj),
+          "@pointercancel":(e) => this._ltCancel(),
+        }
+      : { "@click": () => this._toggleLight(lt.entity, stateObj) };
+
+    return html`
+      <div class="lt-tile ${isOn ? "on" : ""}"
+           @pointerdown="${handlers["@pointerdown"] || null}"
+           @pointermove="${handlers["@pointermove"]  || null}"
+           @pointerup="${handlers["@pointerup"]      || null}"
+           @pointercancel="${handlers["@pointercancel"] || null}"
+           @click="${handlers["@click"] || null}">
+        <div class="lt-icon-wrap">
+          <ha-icon icon="${icon}" style="color:${isOn ? "#fbbf24" : "rgba(255,255,255,0.35)"};--mdc-icon-size:22px"></ha-icon>
+        </div>
+        <div class="lt-info">
+          <div class="lt-name">${name}</div>
+          <div class="lt-state">${isOn ? (pct != null ? pct + "%" : "On") : "Off"}</div>
+        </div>
+        ${isOn && pct != null ? html`
+          <div class="lt-bar-wrap">
+            <div class="lt-bar" style="height:${pct}%"></div>
+          </div>` : ""}
+      </div>
+    `;
+  }
+
+  _toggleLight(entityId, stateObj) {
+    if (!this._hass || !entityId) return;
+    this._hass.callService("light", stateObj?.state === "on" ? "turn_off" : "turn_on", { entity_id: entityId });
+  }
+
+  _ltDown(e, lt, stateObj) {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    this._ltTimer = setTimeout(() => {
+      const brightness = stateObj?.attributes?.brightness ?? 128;
+      this._ltDim = { entity: lt.entity, startY: e.clientY, startBrightness: brightness };
+    }, 400);
+    this._ltDid = false;
+  }
+
+  _ltMove(e) {
+    if (!this._ltDim) return;
+    const dy      = this._ltDim.startY - e.clientY;
+    const newBri  = Math.max(1, Math.min(255, Math.round(this._ltDim.startBrightness + dy * 2)));
+    this._hass.callService("light", "turn_on", { entity_id: this._ltDim.entity, brightness: newBri });
+    this._ltDid   = true;
+  }
+
+  _ltUp(e, lt, stateObj) {
+    clearTimeout(this._ltTimer);
+    e.currentTarget.releasePointerCapture(e.pointerId);
+    if (!this._ltDid) this._toggleLight(lt.entity, stateObj);
+    this._ltDim = null;
+    this._ltDid = false;
+  }
+
+  _ltCancel() {
+    clearTimeout(this._ltTimer);
+    this._ltDim = null;
+    this._ltDid = false;
   }
 
   // ── Power arc gauge ───────────────────────────────────────────────────────────
@@ -772,6 +873,8 @@ class RoomCard extends LitElement {
             <div class="lights-row" style="--sw-cols:${swCols}">
               ${switches.map((s) => this._renderSwitch(s))}
             </div>` : ""}
+
+          ${(cfg.lights || []).length > 0 ? this._renderLights() : ""}
         </div>
       </ha-card>
     `;
@@ -928,6 +1031,53 @@ class RoomCard extends LitElement {
       .light-btn.on .light-name { color: rgba(251,191,36,0.9); }
       .light-status { font-size: 10px; color: rgba(255,255,255,0.25); text-transform: uppercase; letter-spacing: 0.5px; }
       .light-btn.on .light-status { color: rgba(251,191,36,0.5); }
+
+      /* ── Dedicated Lights section ── */
+      .lights-section { padding: 0 16px 14px; position: relative; z-index: 1; }
+      .lights-section-header {
+        display: flex; align-items: center; gap: 6px;
+        font-size: 9px; font-weight: 700; letter-spacing: 1.4px; text-transform: uppercase;
+        color: rgba(255,255,255,0.35); margin-bottom: 8px;
+      }
+      .lights-dot { width: 6px; height: 6px; border-radius: 50%; background: #fbbf24; flex-shrink: 0; }
+      .lights-grid {
+        display: grid;
+        grid-template-columns: repeat(var(--lt-cols, 4), 1fr);
+        gap: 8px;
+      }
+      .lt-tile {
+        background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 12px; padding: 10px 10px 10px 10px;
+        display: flex; flex-direction: row; align-items: center; gap: 8px;
+        cursor: pointer; user-select: none; touch-action: none;
+        transition: background 0.2s, border-color 0.2s;
+        position: relative; overflow: hidden; min-width: 0;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .lt-tile.on {
+        background: rgba(251,191,36,0.08); border-color: rgba(251,191,36,0.3);
+        box-shadow: 0 0 12px rgba(251,191,36,0.08);
+      }
+      .lt-tile:active { transform: scale(0.97); }
+      .lt-icon-wrap { flex-shrink: 0; }
+      .lt-info { flex: 1; min-width: 0; }
+      .lt-name {
+        font-size: 10px; font-weight: 600; letter-spacing: 0.6px;
+        color: rgba(255,255,255,0.5); text-transform: uppercase;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      .lt-tile.on .lt-name { color: rgba(251,191,36,0.85); }
+      .lt-state { font-size: 10px; color: rgba(255,255,255,0.25); letter-spacing: 0.3px; margin-top: 1px; }
+      .lt-tile.on .lt-state { color: rgba(251,191,36,0.5); }
+      .lt-bar-wrap {
+        position: absolute; right: 0; top: 0; bottom: 0;
+        width: 3px; background: rgba(255,255,255,0.05); border-radius: 0 12px 12px 0;
+        display: flex; flex-direction: column; justify-content: flex-end;
+      }
+      .lt-bar {
+        width: 100%; background: #fbbf24; border-radius: 0 12px 12px 0;
+        transition: height 0.4s;
+      }
 
       .power-section { margin: 0 16px 12px; position: relative; z-index: 1; }
       .power-tile {
@@ -1464,6 +1614,38 @@ class RoomCardEditor extends LitElement {
     `;
   }
 
+  // ── TAB: Lights ──────────────────────────────────────────────────────────────
+
+  _tabLights() {
+    const cfg   = this._config;
+    const items = cfg.lights || [];
+    return html`
+      <div class="section">
+        ${this._txt("Section Label", cfg.lights_label, (v) => this._set("lights_label", v), "e.g. Lights")}
+        ${this._numSelect("Columns", cfg.lights_columns || 4, [1, 2, 3, 4], (v) => this._set("lights_columns", v))}
+      </div>
+      <div class="section">
+        ${items.map((s, i) => html`
+          <div class="list-item">
+            <div class="list-item-header">
+              <span class="list-item-num">Light ${i + 1}</span>
+              <button class="btn-remove" @click="${() => this._removeItem("lights", i)}">Remove</button>
+            </div>
+            <label class="ed-label">Entity</label>
+            ${this._renderEntityPicker(s.entity, (v) => this._updateItem("lights", i, "entity", v), ["light"])}
+            ${this._txt("Label", s.label, (v) => this._updateItem("lights", i, "label", v), "e.g. Ceiling")}
+            ${this._toggle("Dimmable (hold + drag to dim)", s.dimmable, (v) => this._updateItem("lights", i, "dimmable", v))}
+            ${this._iconSelect("Icon", s.icon, (v) => this._updateItem("lights", i, "icon", v))}
+          </div>
+        `)}
+        <button class="btn-add"
+          @click="${() => this._addItem("lights", { entity: "", label: "", icon: "mdi:lightbulb", dimmable: false })}">
+          + Add Light
+        </button>
+      </div>
+    `;
+  }
+
   // ── TAB: Power ───────────────────────────────────────────────────────────────
 
   _tabPower() {
@@ -1562,6 +1744,7 @@ class RoomCardEditor extends LitElement {
       { id: "colors",     label: "Colors",     icon: "mdi:palette-swatch",     render: () => this._tabColors()     },
       { id: "sensors",    label: "Sensors",    icon: "mdi:motion-sensor",      render: () => this._tabSensors()    },
       { id: "switches",   label: "Switches",   icon: "mdi:toggle-switch",      render: () => this._tabSwitches()   },
+      { id: "lights",     label: "Lights",     icon: "mdi:lightbulb-group",    render: () => this._tabLights()     },
       { id: "power",      label: "Power",      icon: "mdi:flash-outline",      render: () => this._tabPower()      },
       { id: "mower",      label: "Mower",      icon: "mdi:robot-mower-outline", render: () => this._tabMower()     },
     ];
