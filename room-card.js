@@ -541,7 +541,7 @@ class RoomCard extends LitElement {
         </div>
         ${isOn && pct != null ? html`
           <div class="lt-bar-wrap">
-            <div class="lt-bar" style="height:${pct}%"></div>
+            <div class="lt-bar" style="width:${pct}%"></div>
           </div>` : ""}
       </div>
     `;
@@ -1070,13 +1070,12 @@ class RoomCard extends LitElement {
       .lt-state { font-size: 10px; color: rgba(255,255,255,0.25); letter-spacing: 0.3px; margin-top: 1px; }
       .lt-tile.on .lt-state { color: rgba(251,191,36,0.5); }
       .lt-bar-wrap {
-        position: absolute; right: 0; top: 0; bottom: 0;
-        width: 3px; background: rgba(255,255,255,0.05); border-radius: 0 12px 12px 0;
-        display: flex; flex-direction: column; justify-content: flex-end;
+        position: absolute; left: 0; right: 0; bottom: 0;
+        height: 3px; background: rgba(255,255,255,0.05); border-radius: 0 0 12px 12px;
       }
       .lt-bar {
-        width: 100%; background: #fbbf24; border-radius: 0 12px 12px 0;
-        transition: height 0.4s;
+        height: 100%; background: #fbbf24; border-radius: 0 0 12px 12px;
+        transition: width 0.4s;
       }
 
       .power-section { margin: 0 16px 12px; position: relative; z-index: 1; }
