@@ -179,6 +179,7 @@ class RoomCard extends LitElement {
 
   set hass(hass) {
     this._hass = hass;
+    this._syncLightBars();
     this.requestUpdate();
   }
 
