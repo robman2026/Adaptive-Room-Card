@@ -185,6 +185,7 @@ class RoomCard extends LitElement {
     if (changedProps.has('_config')) {
       this._applyFrostedVars();
     }
+    this._attachLightListeners();
   }
 
   _applyFrostedVars() {
@@ -502,85 +503,100 @@ class RoomCard extends LitElement {
           <span class="lights-dot"></span>${label.toUpperCase()}
         </div>
         <div class="lights-grid" style="--lt-cols:${cols}">
-          ${lights.map((lt) => this._renderLightTile(lt))}
+          ${lights.map((lt, i) => this._renderLightTile(lt, i))}
         </div>
       </div>
     `;
   }
 
-  _renderLightTile(lt) {
-    const stateObj   = this._stateOf(lt.entity);
-    const isOn       = stateObj?.state === "on";
-    const brightness = stateObj?.attributes?.brightness;
-    const pct        = isOn && brightness != null ? Math.round(brightness / 255 * 100) : null;
-    const name       = lt.label || this._friendlyName(lt.entity) || lt.entity;
-    const icon       = lt.icon || (isOn ? "mdi:lightbulb" : "mdi:lightbulb-outline");
-
-    const handlers = lt.dimmable
-      ? {
-          "@pointerdown": (e) => this._ltDown(e, lt, stateObj),
-          "@pointermove":  (e) => this._ltMove(e),
-          "@pointerup":    (e) => this._ltUp(e, lt, stateObj),
-          "@pointercancel":(e) => this._ltCancel(),
-        }
-      : { "@click": () => this._toggleLight(lt.entity, stateObj) };
+  _renderLightTile(lt, i) {
+    const stateObj = this._stateOf(lt.entity);
+    const on       = stateObj?.state === "on";
+    const unavail  = !stateObj;
+    const isLight  = lt.dimmable || (lt.entity || "").startsWith("light.");
+    const rawBri   = isLight ? (stateObj?.attributes?.brightness || 0) : (on ? 255 : 0);
+    const briPct   = Math.max(0, Math.min(100, Math.round(rawBri / 2.55)));
+    const name     = lt.label || this._friendlyName(lt.entity) || lt.entity;
+    const icon     = lt.icon || "mdi:lightbulb-outline";
+    const icolor   = on ? "#ffd26d" : "rgba(255,255,255,0.5)";
+    const subTxt   = unavail ? "N/A" : on ? (isLight && briPct > 0 && briPct < 100 ? briPct + "%" : "On") : "Off";
+    const cls      = "lt-tile " + (unavail ? "lt-unavail" : on ? "lt-on" : "lt-off");
 
     return html`
-      <div class="lt-tile ${isOn ? "on" : ""}"
-           @pointerdown="${handlers["@pointerdown"] || null}"
-           @pointermove="${handlers["@pointermove"]  || null}"
-           @pointerup="${handlers["@pointerup"]      || null}"
-           @pointercancel="${handlers["@pointercancel"] || null}"
-           @click="${handlers["@click"] || null}">
+      <div class="${cls}" data-idx="${i}" data-entity="${lt.entity || ""}" data-dimmable="${isLight ? "1" : "0"}">
+        <div class="lt-fill" id="lt-fill-${i}"
+             style="width:${on ? briPct : 0}%;opacity:${on ? 1 : 0}"></div>
         <div class="lt-icon-wrap">
-          <ha-icon icon="${icon}" style="color:${isOn ? "#fbbf24" : "rgba(255,255,255,0.35)"};--mdc-icon-size:22px"></ha-icon>
+          <ha-icon icon="${icon}" style="color:${icolor};--mdc-icon-size:18px"></ha-icon>
         </div>
         <div class="lt-info">
           <div class="lt-name">${name}</div>
-          <div class="lt-state">${isOn ? (pct != null ? pct + "%" : "On") : "Off"}</div>
+          <div class="lt-state" id="lt-sub-${i}">${subTxt}</div>
         </div>
-        ${isOn && pct != null ? html`
-          <div class="lt-bar-wrap">
-            <div class="lt-bar" style="width:${pct}%"></div>
-          </div>` : ""}
+        <div class="lt-bar-wrap">
+          <div class="lt-bar" id="lt-bar-${i}" style="width:${on ? briPct : 0}%"></div>
+        </div>
       </div>
     `;
   }
 
-  _toggleLight(entityId, stateObj) {
-    if (!this._hass || !entityId) return;
-    this._hass.callService("light", stateObj?.state === "on" ? "turn_off" : "turn_on", { entity_id: entityId });
-  }
+  _attachLightListeners() {
+    const self = this;
+    if (!this.shadowRoot) return;
+    this.shadowRoot.querySelectorAll(".lt-tile[data-entity]").forEach(function(tile) {
+      if (tile._ltListened) return;
+      tile._ltListened = true;
+      const entity = tile.dataset.entity;
+      const idx    = parseInt(tile.dataset.idx);
+      const isDim  = tile.dataset.dimmable === "1";
+      if (!entity) return;
 
-  _ltDown(e, lt, stateObj) {
-    e.currentTarget.setPointerCapture(e.pointerId);
-    this._ltTimer = setTimeout(() => {
-      const brightness = stateObj?.attributes?.brightness ?? 128;
-      this._ltDim = { entity: lt.entity, startY: e.clientY, startBrightness: brightness };
-    }, 400);
-    this._ltDid = false;
-  }
+      let startX = null, startBri = 0, dragging = false, holdTimer = null, longPressed = false;
 
-  _ltMove(e) {
-    if (!this._ltDim) return;
-    const dy      = this._ltDim.startY - e.clientY;
-    const newBri  = Math.max(1, Math.min(255, Math.round(this._ltDim.startBrightness + dy * 2)));
-    this._hass.callService("light", "turn_on", { entity_id: this._ltDim.entity, brightness: newBri });
-    this._ltDid   = true;
-  }
+      tile.addEventListener("pointerdown", function(e) {
+        startX = e.clientX; dragging = false; longPressed = false;
+        tile.setPointerCapture(e.pointerId);
+        startBri = Math.round((self._hass?.states?.[entity]?.attributes?.brightness || 0) / 2.55);
+        holdTimer = setTimeout(function() {
+          if (!dragging) { longPressed = true; self._moreInfo(entity); }
+        }, 600);
+      });
 
-  _ltUp(e, lt, stateObj) {
-    clearTimeout(this._ltTimer);
-    e.currentTarget.releasePointerCapture(e.pointerId);
-    if (!this._ltDid) this._toggleLight(lt.entity, stateObj);
-    this._ltDim = null;
-    this._ltDid = false;
-  }
+      tile.addEventListener("pointermove", function(e) {
+        if (startX === null || !isDim) return;
+        const dx = e.clientX - startX;
+        if (Math.abs(dx) > 8) {
+          dragging = true;
+          clearTimeout(holdTimer);
+          const newBri = Math.max(1, Math.min(100, startBri + Math.round(dx * 0.7)));
+          const fill = self.shadowRoot.getElementById("lt-fill-" + idx);
+          const bar  = self.shadowRoot.getElementById("lt-bar-"  + idx);
+          const sub  = self.shadowRoot.getElementById("lt-sub-"  + idx);
+          if (fill) { fill.style.width = newBri + "%"; fill.style.opacity = "1"; }
+          if (bar)  bar.style.width  = newBri + "%";
+          if (sub)  sub.textContent  = newBri + "%";
+          tile._pendingBri = newBri;
+        }
+      });
 
-  _ltCancel() {
-    clearTimeout(this._ltTimer);
-    this._ltDim = null;
-    this._ltDid = false;
+      tile.addEventListener("pointerup", function() {
+        clearTimeout(holdTimer);
+        if (!longPressed) {
+          if (dragging && tile._pendingBri !== undefined) {
+            self._hass?.callService("light", "turn_on", { entity_id: entity, brightness_pct: tile._pendingBri });
+            tile._pendingBri = undefined;
+          } else {
+            const on = self._hass?.states?.[entity]?.state === "on";
+            self._hass?.callService("light", on ? "turn_off" : "turn_on", { entity_id: entity });
+          }
+        }
+        startX = null; dragging = false; longPressed = false;
+      });
+
+      tile.addEventListener("pointercancel", function() {
+        clearTimeout(holdTimer); startX = null; dragging = false;
+      });
+    });
   }
 
   // ── Power arc gauge ───────────────────────────────────────────────────────────
@@ -1039,44 +1055,38 @@ class RoomCard extends LitElement {
         font-size: 9px; font-weight: 700; letter-spacing: 1.4px; text-transform: uppercase;
         color: rgba(255,255,255,0.35); margin-bottom: 8px;
       }
-      .lights-dot { width: 6px; height: 6px; border-radius: 50%; background: #fbbf24; flex-shrink: 0; }
-      .lights-grid {
-        display: grid;
-        grid-template-columns: repeat(var(--lt-cols, 4), 1fr);
-        gap: 8px;
-      }
+      .lights-dot { width: 6px; height: 6px; border-radius: 50%; background: #ffd26d; flex-shrink: 0; }
+      .lights-grid { display: grid; grid-template-columns: repeat(var(--lt-cols,4),1fr); gap: 7px; }
       .lt-tile {
-        background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
-        border-radius: 12px; padding: 10px 10px 10px 10px;
-        display: flex; flex-direction: row; align-items: center; gap: 8px;
-        cursor: pointer; user-select: none; touch-action: none;
-        transition: background 0.2s, border-color 0.2s;
-        position: relative; overflow: hidden; min-width: 0;
+        position: relative; border-radius: 12px; padding: 11px 12px;
+        display: flex; align-items: center; gap: 11px;
+        cursor: pointer; overflow: hidden; border: 1px solid rgba(255,255,255,0.06);
+        transition: border-color 0.15s; min-width: 0;
+        -webkit-user-select: none; user-select: none; touch-action: none;
         -webkit-tap-highlight-color: transparent;
       }
-      .lt-tile.on {
-        background: rgba(251,191,36,0.08); border-color: rgba(251,191,36,0.3);
-        box-shadow: 0 0 12px rgba(251,191,36,0.08);
+      .lt-tile.lt-off  { background: rgba(255,255,255,0.04); }
+      .lt-tile.lt-on   { background: rgba(255,210,109,0.04); border-color: rgba(255,210,109,0.15); }
+      .lt-tile.lt-unavail { opacity: 0.35; pointer-events: none; }
+      .lt-fill {
+        position: absolute; inset: 0; pointer-events: none; border-radius: 11px;
+        background: rgba(255,180,60,0.22); transition: width 0.12s, opacity 0.15s;
       }
-      .lt-tile:active { transform: scale(0.97); }
-      .lt-icon-wrap { flex-shrink: 0; }
-      .lt-info { flex: 1; min-width: 0; }
+      .lt-tile.lt-off .lt-fill { opacity: 0; }
+      .lt-icon-wrap {
+        width: 38px; height: 38px; border-radius: 50%; background: rgba(0,0,0,0.35);
+        display: flex; align-items: center; justify-content: center; flex-shrink: 0; z-index: 1;
+      }
+      .lt-info { flex: 1; min-width: 0; z-index: 1; }
       .lt-name {
-        font-size: 10px; font-weight: 600; letter-spacing: 0.6px;
-        color: rgba(255,255,255,0.5); text-transform: uppercase;
-        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.92);
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.2; margin-bottom: 3px;
       }
-      .lt-tile.on .lt-name { color: rgba(251,191,36,0.85); }
-      .lt-state { font-size: 10px; color: rgba(255,255,255,0.25); letter-spacing: 0.3px; margin-top: 1px; }
-      .lt-tile.on .lt-state { color: rgba(251,191,36,0.5); }
-      .lt-bar-wrap {
-        position: absolute; left: 0; right: 0; bottom: 0;
-        height: 3px; background: rgba(255,255,255,0.05); border-radius: 0 0 12px 12px;
-      }
-      .lt-bar {
-        height: 100%; background: #fbbf24; border-radius: 0 0 12px 12px;
-        transition: width 0.4s;
-      }
+      .lt-tile.lt-on .lt-name { color: #fff; }
+      .lt-state { font-size: 11px; color: rgba(255,255,255,0.45); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .lt-tile.lt-on .lt-state { color: rgba(255,210,109,0.75); }
+      .lt-bar-wrap { position: absolute; bottom: 0; left: 0; right: 0; height: 3px; background: rgba(255,255,255,0.06); z-index: 2; }
+      .lt-bar { height: 3px; border-radius: 0; background: rgba(255,210,109,0.7); transition: width 0.1s; }
 
       .power-section { margin: 0 16px 12px; position: relative; z-index: 1; }
       .power-tile {
