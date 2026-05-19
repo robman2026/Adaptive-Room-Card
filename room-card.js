@@ -179,6 +179,7 @@ class RoomCard extends LitElement {
 
   set hass(hass) {
     this._hass = hass;
+    this.requestUpdate();
   }
 
   updated(changedProps) {
@@ -568,7 +569,7 @@ class RoomCard extends LitElement {
         if (Math.abs(dx) > 8) {
           dragging = true;
           clearTimeout(holdTimer);
-          const newBri = Math.max(1, Math.min(100, startBri + Math.round(dx * 0.7)));
+          const newBri = Math.max(1, Math.min(100, startBri + Math.round(dx * 0.4)));
           const fill = self.shadowRoot.getElementById("lt-fill-" + idx);
           const bar  = self.shadowRoot.getElementById("lt-bar-"  + idx);
           const sub  = self.shadowRoot.getElementById("lt-sub-"  + idx);
@@ -587,6 +588,13 @@ class RoomCard extends LitElement {
             tile._pendingBri = undefined;
           } else {
             const on = self._hass?.states?.[entity]?.state === "on";
+            if (on) {
+              // reset bar and fill immediately — don't wait for hass re-render
+              const fill = self.shadowRoot?.getElementById("lt-fill-" + idx);
+              const bar  = self.shadowRoot?.getElementById("lt-bar-"  + idx);
+              if (fill) { fill.style.width = "0%"; fill.style.opacity = "0"; }
+              if (bar)  bar.style.width = "0%";
+            }
             self._hass?.callService("light", on ? "turn_off" : "turn_on", { entity_id: entity });
           }
         }
