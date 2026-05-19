@@ -187,6 +187,27 @@ class RoomCard extends LitElement {
       this._applyFrostedVars();
     }
     this._attachLightListeners();
+    this._syncLightBars();
+  }
+
+  _syncLightBars() {
+    if (!this.shadowRoot || !this._hass || !this._config?.lights) return;
+    (this._config.lights || []).forEach((lt, i) => {
+      if (this._draggingIdx === i) return;
+      const stateObj = this._hass.states?.[lt.entity];
+      if (!stateObj) return;
+      const on      = stateObj.state === "on";
+      const isLight = lt.dimmable || (lt.entity || "").startsWith("light.");
+      const rawBri  = isLight ? (stateObj.attributes?.brightness || 0) : (on ? 255 : 0);
+      const briPct  = Math.max(0, Math.min(100, Math.round(rawBri / 2.55)));
+      const w       = on ? briPct : 0;
+      const fill    = this.shadowRoot.getElementById("lt-fill-" + i);
+      const bar     = this.shadowRoot.getElementById("lt-bar-"  + i);
+      const sub     = this.shadowRoot.getElementById("lt-sub-"  + i);
+      if (fill) { fill.style.width = w + "%"; fill.style.opacity = on ? "1" : "0"; }
+      if (bar)  bar.style.width = w + "%";
+      if (sub)  sub.textContent = !on ? "Off" : (isLight && briPct > 0 && briPct < 100 ? briPct + "%" : "On");
+    });
   }
 
   _applyFrostedVars() {
@@ -567,8 +588,7 @@ class RoomCard extends LitElement {
         if (startX === null || !isDim) return;
         const dx = e.clientX - startX;
         if (Math.abs(dx) > 8) {
-          dragging = true;
-          clearTimeout(holdTimer);
+          if (!dragging) { dragging = true; self._draggingIdx = idx; clearTimeout(holdTimer); }
           const newBri = Math.max(1, Math.min(100, startBri + Math.round(dx * 0.4)));
           const fill = self.shadowRoot.getElementById("lt-fill-" + idx);
           const bar  = self.shadowRoot.getElementById("lt-bar-"  + idx);
@@ -582,6 +602,7 @@ class RoomCard extends LitElement {
 
       tile.addEventListener("pointerup", function() {
         clearTimeout(holdTimer);
+        self._draggingIdx = null;
         if (!longPressed) {
           if (dragging && tile._pendingBri !== undefined) {
             self._hass?.callService("light", "turn_on", { entity_id: entity, brightness_pct: tile._pendingBri });
@@ -589,7 +610,6 @@ class RoomCard extends LitElement {
           } else {
             const on = self._hass?.states?.[entity]?.state === "on";
             if (on) {
-              // reset bar and fill immediately — don't wait for hass re-render
               const fill = self.shadowRoot?.getElementById("lt-fill-" + idx);
               const bar  = self.shadowRoot?.getElementById("lt-bar-"  + idx);
               if (fill) { fill.style.width = "0%"; fill.style.opacity = "0"; }
@@ -602,7 +622,7 @@ class RoomCard extends LitElement {
       });
 
       tile.addEventListener("pointercancel", function() {
-        clearTimeout(holdTimer); startX = null; dragging = false;
+        clearTimeout(holdTimer); self._draggingIdx = null; startX = null; dragging = false;
       });
     });
   }
