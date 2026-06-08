@@ -161,7 +161,9 @@ class RoomCard extends LitElement {
       lights_label: "Lights",
       lights_columns: 4,
       camera_entity: "",
+      camera_label: "",
       show_camera: false,
+      section_order: ["climate", "camera", "power", "mower", "sensors", "switches", "lights"],
       mower_entity: "",
       mower_battery_entity: "",
       mower_name: "",
@@ -205,9 +207,11 @@ class RoomCard extends LitElement {
       const fill    = this.shadowRoot.getElementById("lt-fill-" + i);
       const bar     = this.shadowRoot.getElementById("lt-bar-"  + i);
       const sub     = this.shadowRoot.getElementById("lt-sub-"  + i);
+      const ago     = this.shadowRoot.getElementById("lt-ago-"  + i);
       if (fill) { fill.style.width = w + "%"; fill.style.opacity = on ? "1" : "0"; }
       if (bar)  bar.style.width = w + "%";
       if (sub)  sub.textContent = !on ? "Off" : (isLight && briPct > 0 && briPct < 100 ? briPct + "%" : "On");
+      if (ago)  ago.textContent = this._agoStr(stateObj.last_changed);
     });
   }
 
@@ -543,6 +547,7 @@ class RoomCard extends LitElement {
     const icon     = lt.icon || "mdi:lightbulb-outline";
     const icolor   = on ? "#ffd26d" : "rgba(255,255,255,0.5)";
     const subTxt   = unavail ? "N/A" : on ? (isLight && briPct > 0 && briPct < 100 ? briPct + "%" : "On") : "Off";
+    const ago      = stateObj ? this._agoStr(stateObj.last_changed) : "";
     const cls      = "lt-tile " + (unavail ? "lt-unavail" : on ? "lt-on" : "lt-off");
 
     return html`
@@ -555,6 +560,7 @@ class RoomCard extends LitElement {
         <div class="lt-info">
           <div class="lt-name">${name}</div>
           <div class="lt-state" id="lt-sub-${i}">${subTxt}</div>
+          <div class="lt-ago" id="lt-ago-${i}">${ago}</div>
         </div>
         <div class="lt-bar-wrap">
           <div class="lt-bar" id="lt-bar-${i}" style="width:${on ? briPct : 0}%"></div>
@@ -837,7 +843,7 @@ class RoomCard extends LitElement {
     const entityId = this._config.camera_entity;
     if (!entityId || !this._config.show_camera) return "";
     const stateObj = this._stateOf(entityId);
-    const label    = stateObj ? this._friendlyName(entityId) : entityId;
+    const label    = this._config.camera_label || (stateObj ? this._friendlyName(entityId) : entityId);
 
     if (!stateObj) {
       return html`
@@ -877,9 +883,37 @@ class RoomCard extends LitElement {
                    : switches.length === 3 ? 3
                    : switches.length <= 4 ? 2 : 3;
 
+    const DEFAULT_ORDER = ["climate", "camera", "power", "mower", "sensors", "switches", "lights"];
+    const order = cfg.section_order || DEFAULT_ORDER;
+    const BOTTOM = new Set(["sensors", "switches", "lights"]);
+
+    const sectionMap = {
+      climate:  () => climate.length > 0 ? html`<div class="sensors-row">${climate.map((s) => this._renderClimateSensor(s))}</div>` : "",
+      camera:   () => cfg.show_camera && cfg.camera_entity ? html`<div class="camera-section">${this._renderCamera()}</div>` : "",
+      power:    () => cfg.show_power  && cfg.power_entity  ? this._renderPower()  : "",
+      mower:    () => cfg.show_mower  && cfg.mower_entity  ? this._renderMower()  : "",
+      sensors:  () => binary.length > 0 ? html`<div class="${snCols > 1 ? "sensors-grid" : "sensors-list"}" style="${snCols > 1 ? `--sn-cols:${snCols}` : ""}">${binary.map((s) => this._renderBinarySensor(s))}</div>` : "",
+      switches: () => switches.length > 0 ? html`<div class="lights-row" style="--sw-cols:${swCols}">${switches.map((s) => this._renderSwitch(s))}</div>` : "",
+      lights:   () => (cfg.lights || []).length > 0 ? this._renderLights() : "",
+    };
+
+    const hasBottomContent = binary.length > 0 || switches.length > 0;
+    let glowShown = false;
+
+    const sections = order.map((id) => {
+      const isBottom = BOTTOM.has(id);
+      let glow = "";
+      if (isBottom && hasBottomContent && !glowShown) {
+        glowShown = true;
+        glow = html`<div class="glow-line"></div>`;
+      }
+      const content = sectionMap[id] ? sectionMap[id]() : "";
+      return html`${glow}${content}`;
+    });
+
     return html`
       <ha-card>
-        <div class="${this._config.frosted_glass ? 'card card-frosted' : 'card'}">
+        <div class="${cfg.frosted_glass ? 'card card-frosted' : 'card'}">
           <div class="header">
             <div class="header-left">
               ${cfg.room_icon ? html`<ha-icon icon="${cfg.room_icon}" class="room-icon"></ha-icon>` : ""}
@@ -893,33 +927,7 @@ class RoomCard extends LitElement {
             ${cfg.show_status_dot ? html`
               <div class="status-dot ${online ? "dot-online" : "dot-offline"}"></div>` : ""}
           </div>
-
-          ${climate.length > 0 ? html`
-            <div class="sensors-row">
-              ${climate.map((s) => this._renderClimateSensor(s))}
-            </div>` : ""}
-
-          ${cfg.show_camera && cfg.camera_entity ? html`
-            <div class="camera-section">${this._renderCamera()}</div>` : ""}
-
-          ${cfg.show_power && cfg.power_entity ? this._renderPower() : ""}
-
-          ${cfg.show_mower && cfg.mower_entity ? this._renderMower() : ""}
-
-          ${(binary.length > 0 || switches.length > 0) ? html`<div class="glow-line"></div>` : ""}
-
-          ${binary.length > 0 ? html`
-            <div class="${snCols > 1 ? "sensors-grid" : "sensors-list"}"
-                 style="${snCols > 1 ? `--sn-cols:${snCols}` : ""}">
-              ${binary.map((s) => this._renderBinarySensor(s))}
-            </div>` : ""}
-
-          ${switches.length > 0 ? html`
-            <div class="lights-row" style="--sw-cols:${swCols}">
-              ${switches.map((s) => this._renderSwitch(s))}
-            </div>` : ""}
-
-          ${(cfg.lights || []).length > 0 ? this._renderLights() : ""}
+          ${sections}
         </div>
       </ha-card>
     `;
@@ -1114,6 +1122,7 @@ class RoomCard extends LitElement {
       .lt-tile.lt-on .lt-name { color: #fff; }
       .lt-state { font-size: 11px; color: rgba(255,255,255,0.45); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .lt-tile.lt-on .lt-state { color: rgba(255,210,109,0.75); }
+      .lt-ago { font-size: 10px; color: rgba(255,255,255,0.28); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
       .lt-bar-wrap { position: absolute; bottom: 0; left: 0; right: 0; height: 3px; background: rgba(255,255,255,0.06); z-index: 2; }
       .lt-bar { height: 3px; border-radius: 0; background: rgba(255,210,109,0.7); transition: width 0.1s; }
 
@@ -1460,14 +1469,78 @@ class RoomCardEditor extends LitElement {
           ${this._renderEntityPicker(cfg.status_entity, (v) => this._set("status_entity", v), [])}
         ` : ""}
       </div>
+    `;
+  }
+
+  // ── TAB: Camera ──────────────────────────────────────────────────────────────
+
+  _tabCamera() {
+    const cfg = this._config;
+    return html`
       <div class="section">
-        <div class="section-title">Camera</div>
         ${this._toggle("Show Camera Feed", cfg.show_camera, (v) => this._set("show_camera", v))}
         ${cfg.show_camera ? html`
           <label class="ed-label">Camera Entity</label>
           ${this._renderEntityPicker(cfg.camera_entity, (v) => this._set("camera_entity", v), ["camera"])}
+          ${this._txt("Camera Label (optional)", cfg.camera_label, (v) => this._set("camera_label", v), "Leave blank to use entity name")}
         ` : ""}
       </div>
+    `;
+  }
+
+  // ── TAB: Layout ──────────────────────────────────────────────────────────────
+
+  _tabLayout() {
+    const cfg = this._config;
+    const DEFAULT_ORDER = ["climate", "camera", "power", "mower", "sensors", "switches", "lights"];
+    const order = cfg.section_order || [...DEFAULT_ORDER];
+    const LABELS = {
+      climate:  { label: "Climate Sensors",  icon: "mdi:thermometer"         },
+      camera:   { label: "Camera Feed",       icon: "mdi:cctv"                },
+      power:    { label: "Power Monitor",     icon: "mdi:flash-outline"       },
+      mower:    { label: "Mower",             icon: "mdi:robot-mower-outline" },
+      sensors:  { label: "Binary Sensors",    icon: "mdi:motion-sensor"       },
+      switches: { label: "Switches",          icon: "mdi:toggle-switch"       },
+      lights:   { label: "Lights",            icon: "mdi:lightbulb-group"     },
+    };
+
+    const onDragStart = (e, fromIdx) => {
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", String(fromIdx));
+    };
+    const onDragOver = (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; };
+    const onDrop = (e, toIdx) => {
+      e.preventDefault();
+      const fromIdx = parseInt(e.dataTransfer.getData("text/plain"));
+      if (fromIdx === toIdx) return;
+      const next = [...order];
+      const [item] = next.splice(fromIdx, 1);
+      next.splice(toIdx, 0, item);
+      this._set("section_order", next);
+    };
+
+    return html`
+      <p class="hint">Drag rows to change the order sections appear in the card.</p>
+      <div class="layout-list">
+        ${order.map((id, i) => {
+          const meta = LABELS[id] || { label: id, icon: "mdi:view-grid" };
+          return html`
+            <div class="layout-row"
+                 draggable="true"
+                 @dragstart="${(e) => onDragStart(e, i)}"
+                 @dragover="${onDragOver}"
+                 @drop="${(e) => onDrop(e, i)}">
+              <ha-icon icon="mdi:drag-vertical" class="drag-handle"></ha-icon>
+              <ha-icon icon="${meta.icon}" class="layout-section-icon"></ha-icon>
+              <span class="layout-section-label">${meta.label}</span>
+            </div>
+          `;
+        })}
+      </div>
+      <button class="btn-add" style="margin-top:8px"
+              @click="${() => this._set('section_order', [...DEFAULT_ORDER])}">
+        Reset to Default Order
+      </button>
     `;
   }
 
@@ -1776,15 +1849,17 @@ class RoomCardEditor extends LitElement {
     if (!this._config) return html``;
 
     const sections = [
-      { id: "general",    label: "General",    icon: "mdi:home-outline",       render: () => this._tabGeneral()    },
-      { id: "appearance", label: "Appearance", icon: "mdi:palette-outline",    render: () => this._tabAppearance() },
-      { id: "climate",    label: "Climate",    icon: "mdi:thermometer",        render: () => this._tabClimate()    },
-      { id: "colors",     label: "Colors",     icon: "mdi:palette-swatch",     render: () => this._tabColors()     },
-      { id: "sensors",    label: "Sensors",    icon: "mdi:motion-sensor",      render: () => this._tabSensors()    },
-      { id: "switches",   label: "Switches",   icon: "mdi:toggle-switch",      render: () => this._tabSwitches()   },
-      { id: "lights",     label: "Lights",     icon: "mdi:lightbulb-group",    render: () => this._tabLights()     },
-      { id: "power",      label: "Power",      icon: "mdi:flash-outline",      render: () => this._tabPower()      },
-      { id: "mower",      label: "Mower",      icon: "mdi:robot-mower-outline", render: () => this._tabMower()     },
+      { id: "general",    label: "General",    icon: "mdi:home-outline",        render: () => this._tabGeneral()    },
+      { id: "appearance", label: "Appearance", icon: "mdi:palette-outline",     render: () => this._tabAppearance() },
+      { id: "camera",     label: "Camera",     icon: "mdi:cctv",                render: () => this._tabCamera()     },
+      { id: "climate",    label: "Climate",    icon: "mdi:thermometer",         render: () => this._tabClimate()    },
+      { id: "colors",     label: "Colors",     icon: "mdi:palette-swatch",      render: () => this._tabColors()     },
+      { id: "sensors",    label: "Sensors",    icon: "mdi:motion-sensor",       render: () => this._tabSensors()    },
+      { id: "switches",   label: "Switches",   icon: "mdi:toggle-switch",       render: () => this._tabSwitches()   },
+      { id: "lights",     label: "Lights",     icon: "mdi:lightbulb-group",     render: () => this._tabLights()     },
+      { id: "power",      label: "Power",      icon: "mdi:flash-outline",       render: () => this._tabPower()      },
+      { id: "mower",      label: "Mower",      icon: "mdi:robot-mower-outline", render: () => this._tabMower()      },
+      { id: "layout",     label: "Layout",     icon: "mdi:view-dashboard-edit", render: () => this._tabLayout()     },
     ];
 
     const toggle = (id) => {
@@ -1871,6 +1946,15 @@ class RoomCardEditor extends LitElement {
       .btn-remove:hover { background: rgba(239,68,68,0.1); }
       .btn-remove-sm { padding: 2px 5px; font-size: 0.68rem; border: 1px solid #ef4444; border-radius: 4px; background: transparent; color: #ef4444; cursor: pointer; flex-shrink: 0; }
       .btn-remove-sm:disabled { opacity: 0.3; cursor: not-allowed; }
+
+      /* ── Layout drag list ── */
+      .layout-list { display: flex; flex-direction: column; gap: 4px; }
+      .layout-row { display: flex; align-items: center; gap: 8px; padding: 9px 10px; background: var(--secondary-background-color, rgba(0,0,0,0.2)); border: 1px solid var(--divider-color, #334155); border-radius: 7px; cursor: grab; user-select: none; transition: background 0.1s; }
+      .layout-row:hover { background: rgba(59,130,246,0.07); }
+      .layout-row:active { cursor: grabbing; }
+      .drag-handle { --mdc-icon-size: 18px; color: var(--secondary-text-color, #64748b); flex-shrink: 0; }
+      .layout-section-icon { --mdc-icon-size: 16px; color: var(--primary-color, #3b82f6); flex-shrink: 0; }
+      .layout-section-label { font-size: 0.8rem; font-weight: 600; flex: 1; }
 
       /* ── Color stop editor ── */
       .gradient-bar { height: 10px; border-radius: 5px; margin-bottom: 10px; border: 1px solid var(--divider-color, #334155); }
