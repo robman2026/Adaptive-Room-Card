@@ -134,9 +134,10 @@ function _powerSeverityColor(value, max) {
 class RoomCard extends LitElement {
   static get properties() {
     return {
-      _hass:   {},
-      _config: {},
-      _ticks:  { state: true },
+      _hass:            {},
+      _config:          {},
+      _ticks:           { state: true },
+      _weatherForecast: { state: true },
     };
   }
 
@@ -255,21 +256,47 @@ class RoomCard extends LitElement {
       power_current_entity: "",
       power_max_w: 3000,
       show_power: false,
+      weather_entity: "",
+      show_weather: false,
+      weather_forecast_type: "daily",
+      weather_forecast_count: 5,
+      weather_show_details: true,
       frosted_glass: false,
       frosted_opacity: 0.52,
       frosted_blur: 22,
       ...config,
     };
+    // Re-subscribe to forecast when entity changes
+    if (this._hass && config.weather_entity !== undefined) {
+      this._subscribeWeatherForecast();
+    }
   }
 
   connectedCallback() {
     super.connectedCallback();
     this._tickInterval = setInterval(() => { this._ticks = Date.now(); }, 1000);
+    this._subscribeWeatherForecast();
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
     clearInterval(this._tickInterval);
+    this._unsubWeatherForecast?.();
+    this._unsubWeatherForecast = null;
+  }
+
+  _subscribeWeatherForecast() {
+    this._unsubWeatherForecast?.();
+    this._unsubWeatherForecast = null;
+    this._weatherForecast = null;
+    const entityId = this._config?.weather_entity;
+    if (!entityId || !this._config?.show_weather || !this._hass) return;
+    const fType = this._config?.weather_forecast_type === "hourly" ? "hourly" : "daily";
+    this._hass.connection.subscribeMessage(
+      (msg) => { this._weatherForecast = msg.forecast || null; },
+      { type: "weather/subscribe_forecast", entity_id: entityId, forecast_type: fType }
+    ).then((unsub) => { this._unsubWeatherForecast = unsub; })
+     .catch(() => {}); // fallback to attributes.forecast silently
   }
 
   // ── helpers ──────────────────────────────────────────────────────────────────
@@ -866,6 +893,114 @@ class RoomCard extends LitElement {
     `;
   }
 
+  // ── Weather ───────────────────────────────────────────────────────────────────
+
+  _weatherIcon(condition) {
+    const MAP = {
+      "clear-night":      "mdi:weather-night",
+      "cloudy":           "mdi:weather-cloudy",
+      "exceptional":      "mdi:alert-circle-outline",
+      "fog":              "mdi:weather-fog",
+      "hail":             "mdi:weather-hail",
+      "lightning":        "mdi:weather-lightning",
+      "lightning-rainy":  "mdi:weather-lightning-rainy",
+      "partlycloudy":     "mdi:weather-partly-cloudy",
+      "pouring":          "mdi:weather-pouring",
+      "rainy":            "mdi:weather-rainy",
+      "snowy":            "mdi:weather-snowy",
+      "snowy-rainy":      "mdi:weather-snowy-rainy",
+      "sunny":            "mdi:weather-sunny",
+      "windy":            "mdi:weather-windy",
+      "windy-variant":    "mdi:weather-windy-variant",
+    };
+    return MAP[condition] || "mdi:weather-cloudy-alert";
+  }
+
+  _windBearing(bearing) {
+    if (bearing === undefined || bearing === null) return "";
+    if (typeof bearing === "string") return bearing;
+    const dirs = ["N","NE","E","SE","S","SW","W","NW"];
+    return dirs[Math.round(bearing / 45) % 8];
+  }
+
+  _renderWeather() {
+    const cfg      = this._config;
+    const entityId = cfg.weather_entity;
+    if (!entityId || !cfg.show_weather) return "";
+    const stateObj = this._stateOf(entityId);
+    if (!stateObj) return html`<div class="wx-section"><div class="wx-unavail"><ha-icon icon="mdi:weather-cloudy-alert"></ha-icon> Weather unavailable</div></div>`;
+
+    const attrs     = stateObj.attributes;
+    const condition = stateObj.state;
+    const icon      = this._weatherIcon(condition);
+    const condLabel = condition.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+    const temp      = attrs.temperature !== undefined ? Math.round(attrs.temperature) : "—";
+    const tempUnit  = attrs.temperature_unit || "°C";
+    const humidity  = attrs.humidity !== undefined ? Math.round(attrs.humidity) : null;
+    const windSpd   = attrs.wind_speed !== undefined ? Math.round(attrs.wind_speed) : null;
+    const windUnit  = attrs.wind_speed_unit || "km/h";
+    const windDir   = this._windBearing(attrs.wind_bearing);
+    const pressure  = attrs.pressure !== undefined ? Math.round(attrs.pressure) : null;
+    const pressUnit = attrs.pressure_unit || "hPa";
+    const uvIndex   = attrs.uv_index !== undefined ? attrs.uv_index : null;
+    const cloud     = attrs.cloud_coverage !== undefined ? Math.round(attrs.cloud_coverage) : null;
+
+    // Use WS-subscribed forecast, fall back to attributes
+    const forecast  = this._weatherForecast || attrs.forecast || [];
+    const count     = Math.min(parseInt(cfg.weather_forecast_count) || 5, forecast.length);
+    const fcSlice   = forecast.slice(0, count);
+    const isHourly  = fcSlice.length > 0 && fcSlice[0].templow === undefined;
+
+    const fmtDay = (dt) => {
+      const d = new Date(dt);
+      return d.toLocaleDateString(undefined, { weekday: "short" });
+    };
+    const fmtHour = (dt) => {
+      const d = new Date(dt);
+      return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+    };
+
+    return html`
+      <div class="wx-section">
+        <div class="wx-header">
+          <span class="wx-dot"></span>
+          <span class="wx-section-label">${(cfg.weather_label || "WEATHER")}</span>
+        </div>
+        <div class="wx-current">
+          <div class="wx-main">
+            <ha-icon icon="${icon}" class="wx-cond-icon"></ha-icon>
+            <div class="wx-temp">${temp}${tempUnit}</div>
+            <div class="wx-cond-label">${condLabel}</div>
+          </div>
+          ${cfg.weather_show_details !== false ? html`
+            <div class="wx-details">
+              ${windSpd !== null ? html`<span class="wx-detail"><ha-icon icon="mdi:weather-windy" class="wx-detail-icon"></ha-icon>${windSpd} ${windUnit}${windDir ? " " + windDir : ""}</span>` : ""}
+              ${humidity !== null ? html`<span class="wx-detail"><ha-icon icon="mdi:water-percent" class="wx-detail-icon"></ha-icon>${humidity}%</span>` : ""}
+              ${pressure !== null ? html`<span class="wx-detail"><ha-icon icon="mdi:gauge" class="wx-detail-icon"></ha-icon>${pressure} ${pressUnit}</span>` : ""}
+              ${uvIndex !== null ? html`<span class="wx-detail"><ha-icon icon="mdi:white-balance-sunny" class="wx-detail-icon"></ha-icon>UV ${uvIndex}</span>` : ""}
+              ${cloud !== null ? html`<span class="wx-detail"><ha-icon icon="mdi:cloud-percent" class="wx-detail-icon"></ha-icon>${cloud}%</span>` : ""}
+            </div>` : ""}
+        </div>
+        ${fcSlice.length > 0 ? html`
+          <div class="wx-forecast">
+            ${fcSlice.map((fc) => {
+              const hi  = fc.temperature !== undefined ? Math.round(fc.temperature) : "—";
+              const lo  = fc.templow    !== undefined ? Math.round(fc.templow)    : null;
+              const lbl = isHourly ? fmtHour(fc.datetime) : fmtDay(fc.datetime);
+              return html`
+                <div class="wx-fc-item">
+                  <div class="wx-fc-day">${lbl}</div>
+                  <ha-icon icon="${this._weatherIcon(fc.condition)}" class="wx-fc-icon"></ha-icon>
+                  <div class="wx-fc-hi">${hi}°</div>
+                  ${lo !== null ? html`<div class="wx-fc-lo">${lo}°</div>` : ""}
+                </div>
+              `;
+            })}
+          </div>` : ""}
+      </div>
+    `;
+  }
+
   // ── MAIN RENDER ───────────────────────────────────────────────────────────────
 
   render() {
@@ -883,11 +1018,12 @@ class RoomCard extends LitElement {
                    : switches.length === 3 ? 3
                    : switches.length <= 4 ? 2 : 3;
 
-    const DEFAULT_ORDER = ["climate", "camera", "power", "mower", "sensors", "switches", "lights"];
+    const DEFAULT_ORDER = ["weather", "climate", "camera", "power", "mower", "sensors", "switches", "lights"];
     const order = cfg.section_order || DEFAULT_ORDER;
     const BOTTOM = new Set(["sensors", "switches", "lights"]);
 
     const sectionMap = {
+      weather:  () => cfg.show_weather && cfg.weather_entity ? this._renderWeather() : "",
       climate:  () => climate.length > 0 ? html`<div class="sensors-row">${climate.map((s) => this._renderClimateSensor(s))}</div>` : "",
       camera:   () => cfg.show_camera && cfg.camera_entity ? html`<div class="camera-section">${this._renderCamera()}</div>` : "",
       power:    () => cfg.show_power  && cfg.power_entity  ? this._renderPower()  : "",
@@ -995,6 +1131,28 @@ class RoomCard extends LitElement {
       .sensor-value { font-size: 20px; font-weight: 700; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .sensor-unit  { font-size: 12px; font-weight: 400; }
       .sensor-label { font-size: 9px; letter-spacing: 1.5px; color: rgba(255,255,255,0.35); text-transform: uppercase; margin-top: 2px; }
+
+      /* ── Weather ── */
+      .wx-section { margin: 0 16px 12px; }
+      .wx-unavail { display: flex; align-items: center; gap: 6px; color: rgba(255,255,255,0.35); font-size: 12px; padding: 8px 0; }
+      .wx-header { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
+      .wx-dot { width: 6px; height: 6px; border-radius: 50%; background: #60a5fa; box-shadow: 0 0 5px #60a5fa; flex-shrink: 0; }
+      .wx-section-label { font-size: 9px; font-weight: 700; letter-spacing: 1.5px; color: rgba(255,255,255,0.45); text-transform: uppercase; }
+      .wx-current { display: flex; flex-direction: column; gap: 8px; }
+      .wx-main { display: flex; align-items: center; gap: 10px; }
+      .wx-cond-icon { --mdc-icon-size: 40px; color: #fbbf24; flex-shrink: 0; }
+      .wx-temp { font-size: 28px; font-weight: 700; color: #fff; line-height: 1; }
+      .wx-cond-label { font-size: 13px; color: rgba(255,255,255,0.6); flex: 1; }
+      .wx-details { display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 6px 0 4px; }
+      .wx-detail { display: flex; align-items: center; gap: 4px; font-size: 11px; color: rgba(255,255,255,0.55); white-space: nowrap; }
+      .wx-detail-icon { --mdc-icon-size: 13px; color: rgba(255,255,255,0.4); flex-shrink: 0; }
+      .wx-forecast { display: flex; gap: 4px; overflow-x: auto; padding: 10px 0 4px; scrollbar-width: none; }
+      .wx-forecast::-webkit-scrollbar { display: none; }
+      .wx-fc-item { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 48px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.07); border-radius: 10px; padding: 8px 6px; flex-shrink: 0; }
+      .wx-fc-day { font-size: 10px; font-weight: 600; color: rgba(255,255,255,0.5); text-transform: uppercase; letter-spacing: 0.5px; }
+      .wx-fc-icon { --mdc-icon-size: 20px; color: #fbbf24; }
+      .wx-fc-hi { font-size: 12px; font-weight: 700; color: #fff; }
+      .wx-fc-lo { font-size: 11px; color: rgba(255,255,255,0.4); }
 
       .camera-section { margin: 0 16px 12px; position: relative; z-index: 1; }
       .camera-container { border-radius: 14px; overflow: hidden; position: relative; border: 1px solid rgba(255,255,255,0.08); background: #0a0e1a; }
@@ -1472,6 +1630,31 @@ class RoomCardEditor extends LitElement {
     `;
   }
 
+  // ── TAB: Weather ─────────────────────────────────────────────────────────────
+
+  _tabWeather() {
+    const cfg = this._config;
+    return html`
+      <div class="section">
+        ${this._toggle("Show Weather", cfg.show_weather, (v) => this._set("show_weather", v))}
+        ${cfg.show_weather ? html`
+          <label class="ed-label">Weather Entity</label>
+          ${this._renderEntityPicker(cfg.weather_entity, (v) => { this._set("weather_entity", v); this._subscribeWeatherForecast(); }, ["weather"])}
+          ${this._txt("Section Label", cfg.weather_label, (v) => this._set("weather_label", v), "e.g. Weather")}
+          ${this._toggle("Show Details (wind, humidity, UV…)", cfg.weather_show_details !== false, (v) => this._set("weather_show_details", v))}
+          <label class="ed-label">Forecast Type</label>
+          <div class="two-col">
+            <button class="btn-seg ${(cfg.weather_forecast_type || 'daily') === 'daily' ? 'btn-seg-active' : ''}"
+                    @click="${() => { this._set('weather_forecast_type', 'daily'); this._subscribeWeatherForecast(); }}">Daily</button>
+            <button class="btn-seg ${cfg.weather_forecast_type === 'hourly' ? 'btn-seg-active' : ''}"
+                    @click="${() => { this._set('weather_forecast_type', 'hourly'); this._subscribeWeatherForecast(); }}">Hourly</button>
+          </div>
+          ${this._numSelect("Forecast Items", cfg.weather_forecast_count || 5, [3, 5, 7], (v) => this._set("weather_forecast_count", v))}
+        ` : ""}
+      </div>
+    `;
+  }
+
   // ── TAB: Camera ──────────────────────────────────────────────────────────────
 
   _tabCamera() {
@@ -1492,16 +1675,17 @@ class RoomCardEditor extends LitElement {
 
   _tabLayout() {
     const cfg = this._config;
-    const DEFAULT_ORDER = ["climate", "camera", "power", "mower", "sensors", "switches", "lights"];
+    const DEFAULT_ORDER = ["weather", "climate", "camera", "power", "mower", "sensors", "switches", "lights"];
     const order = cfg.section_order || [...DEFAULT_ORDER];
     const LABELS = {
-      climate:  { label: "Climate Sensors",  icon: "mdi:thermometer"         },
-      camera:   { label: "Camera Feed",       icon: "mdi:cctv"                },
-      power:    { label: "Power Monitor",     icon: "mdi:flash-outline"       },
-      mower:    { label: "Mower",             icon: "mdi:robot-mower-outline" },
-      sensors:  { label: "Binary Sensors",    icon: "mdi:motion-sensor"       },
-      switches: { label: "Switches",          icon: "mdi:toggle-switch"       },
-      lights:   { label: "Lights",            icon: "mdi:lightbulb-group"     },
+      weather:  { label: "Weather",           icon: "mdi:weather-partly-cloudy" },
+      climate:  { label: "Climate Sensors",   icon: "mdi:thermometer"           },
+      camera:   { label: "Camera Feed",       icon: "mdi:cctv"                  },
+      power:    { label: "Power Monitor",     icon: "mdi:flash-outline"         },
+      mower:    { label: "Mower",             icon: "mdi:robot-mower-outline"   },
+      sensors:  { label: "Binary Sensors",    icon: "mdi:motion-sensor"         },
+      switches: { label: "Switches",          icon: "mdi:toggle-switch"         },
+      lights:   { label: "Lights",            icon: "mdi:lightbulb-group"       },
     };
 
     const onDragStart = (e, fromIdx) => {
@@ -1851,6 +2035,7 @@ class RoomCardEditor extends LitElement {
     const sections = [
       { id: "general",    label: "General",    icon: "mdi:home-outline",        render: () => this._tabGeneral()    },
       { id: "appearance", label: "Appearance", icon: "mdi:palette-outline",     render: () => this._tabAppearance() },
+      { id: "weather",    label: "Weather",    icon: "mdi:weather-partly-cloudy", render: () => this._tabWeather()    },
       { id: "camera",     label: "Camera",     icon: "mdi:cctv",                render: () => this._tabCamera()     },
       { id: "climate",    label: "Climate",    icon: "mdi:thermometer",         render: () => this._tabClimate()    },
       { id: "colors",     label: "Colors",     icon: "mdi:palette-swatch",      render: () => this._tabColors()     },
@@ -1929,6 +2114,8 @@ class RoomCardEditor extends LitElement {
       .color-picker.sm { width: 28px; height: 24px; }
 
       .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+      .btn-seg { flex: 1; padding: 6px 4px; font-size: 0.75rem; font-weight: 600; border: 1px solid var(--divider-color, #334155); border-radius: 6px; background: transparent; color: var(--secondary-text-color, #94a3b8); cursor: pointer; transition: background 0.15s, color 0.15s; }
+      .btn-seg-active { background: var(--primary-color, #3b82f6); color: #fff; border-color: var(--primary-color, #3b82f6); }
 
       .list-item { background: var(--secondary-background-color, rgba(0,0,0,0.2)); border: 1px solid var(--divider-color, #334155); border-radius: 8px; padding: 10px; margin-bottom: 8px; }
       .list-item-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
