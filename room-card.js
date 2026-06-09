@@ -261,6 +261,7 @@ class RoomCard extends LitElement {
       weather_forecast_type: "daily",
       weather_forecast_count: 5,
       weather_show_details: true,
+      weather_alerts: [],
       frosted_glass: false,
       frosted_opacity: 0.52,
       frosted_blur: 22,
@@ -449,13 +450,14 @@ class RoomCard extends LitElement {
 
   // ── Binary / state sensor row ─────────────────────────────────────────────────
 
-  _renderBinarySensor(sensor) {
+  _renderBinarySensor(sensor, alerts = new Map()) {
     const entityId    = sensor.entity;
     const stateObj    = this._stateOf(entityId);
     const state       = stateObj ? stateObj.state : "unknown";
     const label       = sensor.label || (stateObj ? this._friendlyName(entityId) : entityId);
     const deviceClass = this._attr(entityId, "device_class") || "";
     const ago         = this._agoStr(stateObj ? stateObj.last_changed : null);
+    const alert       = alerts.get(entityId);
 
     const defaultMap = {
       on:       { label: "On",       color: "#fbbf24" },
@@ -486,9 +488,11 @@ class RoomCard extends LitElement {
 
     const snCols = Math.max(1, Math.min(4, parseInt(this._config.sensor_columns) || 1));
 
+    const alertCls = alert ? ` alert-pulse-${alert.color}` : "";
+
     if (snCols > 1) {
       return html`
-        <div class="sensor-tile-compact ${isMotion && isActive ? "motion-row-active" : ""}" style="cursor:pointer" @click="${() => this._moreInfo(entityId)}">
+        <div class="sensor-tile-compact ${isMotion && isActive ? "motion-row-active" : ""}${alertCls}" style="cursor:pointer" @click="${() => this._moreInfo(entityId)}">
           ${motionIconHtml}
           <div class="sensor-tile-compact-name">${label}</div>
           <div class="sensor-tile-compact-state ${isMotion && isActive ? "state-detected" : ""}"
@@ -499,7 +503,7 @@ class RoomCard extends LitElement {
     }
 
     return html`
-      <div class="sensor-row ${isMotion && isActive ? "motion-row-active" : ""}" style="cursor:pointer" @click="${() => this._moreInfo(entityId)}">
+      <div class="sensor-row ${isMotion && isActive ? "motion-row-active" : ""}${alertCls}" style="cursor:pointer" @click="${() => this._moreInfo(entityId)}">
         ${motionIconHtml}
         <div class="sensor-text">
           <div class="sensor-name">${label}</div>
@@ -513,7 +517,7 @@ class RoomCard extends LitElement {
 
   // ── Switch tile ───────────────────────────────────────────────────────────────
 
-  _renderSwitch(sw) {
+  _renderSwitch(sw, alerts = new Map()) {
     const entityId = sw.entity;
     const stateObj = this._stateOf(entityId);
     const state    = stateObj ? stateObj.state : "off";
@@ -521,9 +525,11 @@ class RoomCard extends LitElement {
     const label    = sw.label || (stateObj ? this._friendlyName(entityId) : entityId);
     const icon     = sw.icon  || (isOn ? "mdi:lightbulb" : "mdi:lightbulb-off");
     const color    = sw.color || "#fbbf24";
+    const alert    = alerts.get(entityId);
+    const alertCls = alert ? ` alert-pulse-${alert.color}` : "";
 
     return html`
-      <div class="light-btn ${isOn ? "on" : ""}"
+      <div class="light-btn ${isOn ? "on" : ""}${alertCls}"
            style="${isOn ? `--sw-color:${color}` : ""}"
            @click="${() => this._toggleSwitch(entityId, state)}">
         <ha-icon icon="${icon}"
@@ -545,7 +551,7 @@ class RoomCard extends LitElement {
 
   // ── Lights section ───────────────────────────────────────────────────────────
 
-  _renderLights() {
+  _renderLights(alerts = new Map()) {
     const cfg    = this._config;
     const lights = cfg.lights || [];
     if (!lights.length) return "";
@@ -557,13 +563,13 @@ class RoomCard extends LitElement {
           <span class="lights-dot"></span>${label.toUpperCase()}
         </div>
         <div class="lights-grid" style="--lt-cols:${cols}">
-          ${lights.map((lt, i) => this._renderLightTile(lt, i))}
+          ${lights.map((lt, i) => this._renderLightTile(lt, i, alerts))}
         </div>
       </div>
     `;
   }
 
-  _renderLightTile(lt, i) {
+  _renderLightTile(lt, i, alerts = new Map()) {
     const stateObj = this._stateOf(lt.entity);
     const on       = stateObj?.state === "on";
     const unavail  = !stateObj;
@@ -575,7 +581,8 @@ class RoomCard extends LitElement {
     const icolor   = on ? "#ffd26d" : "rgba(255,255,255,0.5)";
     const subTxt   = unavail ? "N/A" : on ? (isLight && briPct > 0 && briPct < 100 ? briPct + "%" : "On") : "Off";
     const ago      = stateObj ? this._agoStr(stateObj.last_changed) : "";
-    const cls      = "lt-tile " + (unavail ? "lt-unavail" : on ? "lt-on" : "lt-off");
+    const alert    = alerts.get(lt.entity);
+    const cls      = "lt-tile " + (unavail ? "lt-unavail" : on ? "lt-on" : "lt-off") + (alert ? ` alert-pulse-${alert.color}` : "");
 
     return html`
       <div class="${cls}" data-idx="${i}" data-entity="${lt.entity || ""}" data-dimmable="${isLight ? "1" : "0"}">
@@ -1001,6 +1008,70 @@ class RoomCard extends LitElement {
     `;
   }
 
+  // ── Weather alerts ────────────────────────────────────────────────────────────
+
+  static get _ALERT_CONDITION_GROUPS() {
+    return {
+      rain:      ["rainy", "pouring", "lightning-rainy"],
+      snow:      ["snowy", "snowy-rainy"],
+      lightning: ["lightning", "lightning-rainy"],
+      wind:      ["windy", "windy-variant"],
+      hail:      ["hail"],
+    };
+  }
+
+  _computeActiveAlerts() {
+    const cfg = this._config;
+    const rules = cfg.weather_alerts || [];
+    if (!rules.length) return new Map();
+
+    const weatherEntityId = cfg.weather_entity;
+    const weatherState    = weatherEntityId ? this._stateOf(weatherEntityId)?.state : null;
+    const groups          = RoomCard._ALERT_CONDITION_GROUPS;
+
+    const active = new Map();
+    for (const rule of rules) {
+      if (!rule.entity) continue;
+      // Expand group IDs to individual HA condition strings
+      const condGroups = rule.condition_groups?.length ? rule.condition_groups
+                       : ["rain", "snow", "lightning", "hail"]; // sensible default
+      const conditions = condGroups.flatMap((g) => groups[g] || []);
+      const weatherMatch = !weatherState || conditions.includes(weatherState);
+      // We only fire if weather entity is configured and matches
+      if (weatherEntityId && !conditions.includes(weatherState)) continue;
+      const triggerState = rule.trigger_state || "open";
+      const entityState  = this._stateOf(rule.entity)?.state;
+      if (entityState === triggerState) {
+        const label = rule.label || this._friendlyName(rule.entity) || rule.entity;
+        active.set(rule.entity, { color: rule.color || "red", label });
+      }
+    }
+    return active;
+  }
+
+  _renderAlertBanner(activeAlerts) {
+    if (!activeAlerts.size) return "";
+    const weatherState = this._stateOf(this._config.weather_entity)?.state || "";
+    const condLabel    = weatherState.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+    const icon         = this._weatherIcon(weatherState);
+    const hasRed       = [...activeAlerts.values()].some((a) => a.color === "red");
+
+    return html`
+      <div class="alert-banner ${hasRed ? "alert-banner-red" : "alert-banner-orange"}">
+        <ha-icon icon="${icon}" class="alert-banner-wx-icon"></ha-icon>
+        <div class="alert-banner-body">
+          <div class="alert-banner-title">${condLabel} detected</div>
+          <div class="alert-banner-items">
+            ${[...activeAlerts.values()].map((a) => html`
+              <span class="alert-banner-chip alert-chip-${a.color}">${a.label}</span>
+            `)}
+          </div>
+        </div>
+        <ha-icon icon="mdi:alert" class="alert-banner-alert-icon alert-icon-${hasRed ? "red" : "orange"}"></ha-icon>
+      </div>
+    `;
+  }
+
   // ── MAIN RENDER ───────────────────────────────────────────────────────────────
 
   render() {
@@ -1019,8 +1090,9 @@ class RoomCard extends LitElement {
                    : switches.length <= 4 ? 2 : 3;
 
     const DEFAULT_ORDER = ["weather", "climate", "camera", "power", "mower", "sensors", "switches", "lights"];
-    const order = cfg.section_order || DEFAULT_ORDER;
-    const BOTTOM = new Set(["sensors", "switches", "lights"]);
+    const order        = cfg.section_order || DEFAULT_ORDER;
+    const BOTTOM       = new Set(["sensors", "switches", "lights"]);
+    const alerts       = this._computeActiveAlerts();
 
     const sectionMap = {
       weather:  () => cfg.show_weather && cfg.weather_entity ? this._renderWeather() : "",
@@ -1028,9 +1100,9 @@ class RoomCard extends LitElement {
       camera:   () => cfg.show_camera && cfg.camera_entity ? html`<div class="camera-section">${this._renderCamera()}</div>` : "",
       power:    () => cfg.show_power  && cfg.power_entity  ? this._renderPower()  : "",
       mower:    () => cfg.show_mower  && cfg.mower_entity  ? this._renderMower()  : "",
-      sensors:  () => binary.length > 0 ? html`<div class="${snCols > 1 ? "sensors-grid" : "sensors-list"}" style="${snCols > 1 ? `--sn-cols:${snCols}` : ""}">${binary.map((s) => this._renderBinarySensor(s))}</div>` : "",
-      switches: () => switches.length > 0 ? html`<div class="lights-row" style="--sw-cols:${swCols}">${switches.map((s) => this._renderSwitch(s))}</div>` : "",
-      lights:   () => (cfg.lights || []).length > 0 ? this._renderLights() : "",
+      sensors:  () => binary.length > 0 ? html`<div class="${snCols > 1 ? "sensors-grid" : "sensors-list"}" style="${snCols > 1 ? `--sn-cols:${snCols}` : ""}">${binary.map((s) => this._renderBinarySensor(s, alerts))}</div>` : "",
+      switches: () => switches.length > 0 ? html`<div class="lights-row" style="--sw-cols:${swCols}">${switches.map((s) => this._renderSwitch(s, alerts))}</div>` : "",
+      lights:   () => (cfg.lights || []).length > 0 ? this._renderLights(alerts) : "",
     };
 
     const hasBottomContent = binary.length > 0 || switches.length > 0;
@@ -1063,6 +1135,7 @@ class RoomCard extends LitElement {
             ${cfg.show_status_dot ? html`
               <div class="status-dot ${online ? "dot-online" : "dot-offline"}"></div>` : ""}
           </div>
+          ${this._renderAlertBanner(alerts)}
           ${sections}
         </div>
       </ha-card>
@@ -1169,6 +1242,37 @@ class RoomCard extends LitElement {
         background: linear-gradient(90deg, transparent, rgba(99,179,237,0.3), rgba(168,85,247,0.3), transparent);
         margin: 0 16px;
       }
+
+      /* ── Weather alert banner ── */
+      .alert-banner {
+        display: flex; align-items: center; gap: 10px;
+        margin: 0 16px 12px; padding: 10px 12px;
+        border-radius: 10px; border: 1px solid;
+      }
+      .alert-banner-red    { background: rgba(239,68,68,0.1);  border-color: rgba(239,68,68,0.35); }
+      .alert-banner-orange { background: rgba(251,146,60,0.1); border-color: rgba(251,146,60,0.35); }
+      .alert-banner-wx-icon { --mdc-icon-size: 22px; color: rgba(255,255,255,0.7); flex-shrink: 0; }
+      .alert-banner-body { flex: 1; min-width: 0; }
+      .alert-banner-title { font-size: 11px; font-weight: 700; color: rgba(255,255,255,0.8); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
+      .alert-banner-items { display: flex; flex-wrap: wrap; gap: 4px; }
+      .alert-banner-chip  { font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 99px; border: 1px solid; }
+      .alert-chip-red    { color: #fca5a5; border-color: rgba(239,68,68,0.5); background: rgba(239,68,68,0.12); }
+      .alert-chip-orange { color: #fdba74; border-color: rgba(251,146,60,0.5); background: rgba(251,146,60,0.12); }
+      .alert-banner-alert-icon { --mdc-icon-size: 20px; flex-shrink: 0; }
+      .alert-icon-red    { color: #f87171; }
+      .alert-icon-orange { color: #fb923c; }
+
+      /* ── Alert pulse animations ── */
+      @keyframes _alert-pulse-red {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); border-color: rgba(239,68,68,0.25); }
+        50%       { box-shadow: 0 0 0 5px rgba(239,68,68,0.18); border-color: rgba(239,68,68,0.85); }
+      }
+      @keyframes _alert-pulse-orange {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(251,146,60,0); border-color: rgba(251,146,60,0.25); }
+        50%       { box-shadow: 0 0 0 5px rgba(251,146,60,0.18); border-color: rgba(251,146,60,0.85); }
+      }
+      .alert-pulse-red    { animation: _alert-pulse-red    1.6s ease-in-out infinite; border: 1px solid rgba(239,68,68,0.25) !important; }
+      .alert-pulse-orange { animation: _alert-pulse-orange 1.6s ease-in-out infinite; border: 1px solid rgba(251,146,60,0.25) !important; }
 
       .sensors-list {
         margin: 12px 16px 12px;
@@ -1655,6 +1759,79 @@ class RoomCardEditor extends LitElement {
     `;
   }
 
+  // ── TAB: Alerts ──────────────────────────────────────────────────────────────
+
+  _tabAlerts() {
+    const cfg   = this._config;
+    const rules = cfg.weather_alerts || [];
+    const self  = this;
+    const GROUPS = [
+      { id: "rain",      label: "Rain",      icon: "mdi:weather-rainy"     },
+      { id: "snow",      label: "Snow",      icon: "mdi:weather-snowy"     },
+      { id: "lightning", label: "Lightning", icon: "mdi:weather-lightning" },
+      { id: "wind",      label: "Wind",      icon: "mdi:weather-windy"     },
+      { id: "hail",      label: "Hail",      icon: "mdi:weather-hail"      },
+    ];
+    const DEFAULT_GROUPS = ["rain", "snow", "lightning", "hail"];
+
+    return html`
+      <p class="hint">
+        When the weather matches and the entity is in the trigger state,
+        that tile will pulse and a banner will appear at the top of the card.
+      </p>
+      <div class="section">
+        ${rules.map((rule, i) => {
+          const cGroups = rule.condition_groups || [...DEFAULT_GROUPS];
+          return html`
+            <div class="list-item">
+              <div class="list-item-header">
+                <span class="list-item-num">Alert ${i + 1}</span>
+                <button class="btn-remove" @click="${() => self._removeItem('weather_alerts', i)}">Remove</button>
+              </div>
+
+              <label class="ed-label">Entity to watch</label>
+              ${self._renderEntityPicker(rule.entity, (v) => self._updateItem('weather_alerts', i, 'entity', v), [])}
+
+              ${self._txt("Trigger when state =", rule.trigger_state,
+                (v) => self._updateItem('weather_alerts', i, 'trigger_state', v), "e.g. open")}
+
+              <label class="ed-label">Trigger on weather</label>
+              <div class="alert-group-row">
+                ${GROUPS.map((g) => {
+                  const active = cGroups.includes(g.id);
+                  return html`
+                    <button class="btn-seg ${active ? "btn-seg-active" : ""}"
+                            @click="${() => {
+                              const next = active ? cGroups.filter((x) => x !== g.id) : [...cGroups, g.id];
+                              self._updateItem('weather_alerts', i, 'condition_groups', next);
+                            }}">
+                      <ha-icon icon="${g.icon}" style="--mdc-icon-size:13px;margin-right:3px"></ha-icon>${g.label}
+                    </button>
+                  `;
+                })}
+              </div>
+
+              <label class="ed-label">Alert color</label>
+              <div class="two-col">
+                <button class="btn-seg ${(rule.color || 'red') === 'red' ? 'btn-seg-active' : ''}"
+                        @click="${() => self._updateItem('weather_alerts', i, 'color', 'red')}">🔴 Red</button>
+                <button class="btn-seg ${rule.color === 'orange' ? 'btn-seg-active' : ''}"
+                        @click="${() => self._updateItem('weather_alerts', i, 'color', 'orange')}">🟠 Orange</button>
+              </div>
+
+              ${self._txt("Label (optional)", rule.label,
+                (v) => self._updateItem('weather_alerts', i, 'label', v), "Overrides entity name in banner")}
+            </div>
+          `;
+        })}
+        <button class="btn-add"
+          @click="${() => self._addItem('weather_alerts', { entity: '', trigger_state: 'open', condition_groups: [...DEFAULT_GROUPS], color: 'red', label: '' })}">
+          + Add Alert Rule
+        </button>
+      </div>
+    `;
+  }
+
   // ── TAB: Camera ──────────────────────────────────────────────────────────────
 
   _tabCamera() {
@@ -2036,6 +2213,7 @@ class RoomCardEditor extends LitElement {
       { id: "general",    label: "General",    icon: "mdi:home-outline",        render: () => this._tabGeneral()    },
       { id: "appearance", label: "Appearance", icon: "mdi:palette-outline",     render: () => this._tabAppearance() },
       { id: "weather",    label: "Weather",    icon: "mdi:weather-partly-cloudy", render: () => this._tabWeather()    },
+      { id: "alerts",     label: "Alerts",     icon: "mdi:alert-circle-outline",  render: () => this._tabAlerts()     },
       { id: "camera",     label: "Camera",     icon: "mdi:cctv",                render: () => this._tabCamera()     },
       { id: "climate",    label: "Climate",    icon: "mdi:thermometer",         render: () => this._tabClimate()    },
       { id: "colors",     label: "Colors",     icon: "mdi:palette-swatch",      render: () => this._tabColors()     },
@@ -2116,6 +2294,8 @@ class RoomCardEditor extends LitElement {
       .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
       .btn-seg { flex: 1; padding: 6px 4px; font-size: 0.75rem; font-weight: 600; border: 1px solid var(--divider-color, #334155); border-radius: 6px; background: transparent; color: var(--secondary-text-color, #94a3b8); cursor: pointer; transition: background 0.15s, color 0.15s; }
       .btn-seg-active { background: var(--primary-color, #3b82f6); color: #fff; border-color: var(--primary-color, #3b82f6); }
+      .alert-group-row { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+      .alert-group-row .btn-seg { flex: none; padding: 4px 8px; font-size: 0.72rem; display: flex; align-items: center; }
 
       .list-item { background: var(--secondary-background-color, rgba(0,0,0,0.2)); border: 1px solid var(--divider-color, #334155); border-radius: 8px; padding: 10px; margin-bottom: 8px; }
       .list-item-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
