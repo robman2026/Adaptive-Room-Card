@@ -1046,7 +1046,7 @@ class RoomCard extends LitElement {
       }
 
       // Entity state check — case-insensitive, trimmed
-      const triggerState = (rule.trigger_state || "open").trim().toLowerCase();
+      const triggerState = (rule.trigger_state || "on").trim().toLowerCase();
       const entityState  = (this._stateOf(rule.entity)?.state || "").trim().toLowerCase();
       if (!entityState) continue;
       if (entityState !== triggerState) continue;
@@ -1836,7 +1836,13 @@ class RoomCardEditor extends LitElement {
               ${self._renderEntityPicker(rule.entity, (v) => self._updateItem('weather_alerts', i, 'entity', v), [])}
 
               ${self._txt("Trigger when state =", rule.trigger_state,
-                (v) => self._updateItem('weather_alerts', i, 'trigger_state', v), "e.g. open")}
+                (v) => self._updateItem('weather_alerts', i, 'trigger_state', v),
+                "Raw HA state — binary sensors: 'on' / 'off'")}
+              <p class="hint" style="margin-top:2px">
+                Use the raw HA state, not the display label. Binary sensors always report
+                <b>on</b> / <b>off</b> regardless of how they are displayed on the card.
+                Covers use <b>open</b> / <b>closed</b>. Check the badge above to see the current state.
+              </p>
 
               <label class="ed-label">Trigger on weather</label>
               <div class="alert-group-row">
@@ -1868,7 +1874,7 @@ class RoomCardEditor extends LitElement {
           `;
         })}
         <button class="btn-add"
-          @click="${() => self._addItem('weather_alerts', { entity: '', trigger_state: 'open', condition_groups: [...DEFAULT_GROUPS], color: 'red', label: '' })}">
+          @click="${() => self._addItem('weather_alerts', { entity: '', trigger_state: 'on', condition_groups: [...DEFAULT_GROUPS], color: 'red', label: '' })}">
           + Add Alert Rule
         </button>
       </div>
