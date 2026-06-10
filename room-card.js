@@ -1021,30 +1021,38 @@ class RoomCard extends LitElement {
   }
 
   _computeActiveAlerts() {
-    const cfg = this._config;
-    const rules = cfg.weather_alerts || [];
+    const cfg    = this._config;
+    const rules  = cfg.weather_alerts || [];
     if (!rules.length) return new Map();
 
-    const weatherEntityId = cfg.weather_entity;
-    const weatherState    = weatherEntityId ? this._stateOf(weatherEntityId)?.state : null;
-    const groups          = RoomCard._ALERT_CONDITION_GROUPS;
-
+    const groups = RoomCard._ALERT_CONDITION_GROUPS;
     const active = new Map();
+
     for (const rule of rules) {
       if (!rule.entity) continue;
-      // Expand group IDs to individual HA condition strings
-      const condGroups = rule.condition_groups?.length ? rule.condition_groups
-                       : ["rain", "snow", "lightning", "hail"]; // sensible default
+
+      // Resolve weather entity: per-rule override, then global, then skip weather check
+      const wxEntityId = rule.weather_entity || cfg.weather_entity || null;
+      const wxState    = wxEntityId ? (this._stateOf(wxEntityId)?.state || null) : null;
+
+      // Expand selected group IDs to flat HA condition strings
+      const condGroups = rule.condition_groups?.length ? rule.condition_groups : ["rain", "snow", "lightning", "hail"];
       const conditions = condGroups.flatMap((g) => groups[g] || []);
-      const weatherMatch = !weatherState || conditions.includes(weatherState);
-      // We only fire if weather entity is configured and matches
-      if (weatherEntityId && !conditions.includes(weatherState)) continue;
-      const triggerState = rule.trigger_state || "open";
-      const entityState  = this._stateOf(rule.entity)?.state;
-      if (entityState === triggerState) {
-        const label = rule.label || this._friendlyName(rule.entity) || rule.entity;
-        active.set(rule.entity, { color: rule.color || "red", label });
+
+      // Weather check: if a weather entity is configured it MUST match; if none configured, always pass
+      if (wxEntityId) {
+        if (!wxState) continue;                      // entity not available yet
+        if (!conditions.includes(wxState)) continue; // condition doesn't match
       }
+
+      // Entity state check — case-insensitive, trimmed
+      const triggerState = (rule.trigger_state || "on").trim().toLowerCase();
+      const entityState  = (this._stateOf(rule.entity)?.state || "").trim().toLowerCase();
+      if (!entityState) continue;
+      if (entityState !== triggerState) continue;
+
+      const label = (rule.label || "").trim() || this._friendlyName(rule.entity) || rule.entity;
+      active.set(rule.entity, { color: rule.color || "red", label });
     }
     return active;
   }
@@ -1762,9 +1770,10 @@ class RoomCardEditor extends LitElement {
   // ── TAB: Alerts ──────────────────────────────────────────────────────────────
 
   _tabAlerts() {
-    const cfg   = this._config;
-    const rules = cfg.weather_alerts || [];
-    const self  = this;
+    const cfg    = this._config;
+    const rules  = cfg.weather_alerts || [];
+    const self   = this;
+    const groups = RoomCard._ALERT_CONDITION_GROUPS;
     const GROUPS = [
       { id: "rain",      label: "Rain",      icon: "mdi:weather-rainy"     },
       { id: "snow",      label: "Snow",      icon: "mdi:weather-snowy"     },
@@ -1778,10 +1787,42 @@ class RoomCardEditor extends LitElement {
       <p class="hint">
         When the weather matches and the entity is in the trigger state,
         that tile will pulse and a banner will appear at the top of the card.
+        The status badges below update live — use them to diagnose why an alert is or isn't firing.
       </p>
       <div class="section">
         ${rules.map((rule, i) => {
           const cGroups = rule.condition_groups || [...DEFAULT_GROUPS];
+
+          // ── Live status diagnostics ──────────────────────────────────
+          const wxEntityId  = rule.weather_entity || cfg.weather_entity || null;
+          const wxState     = wxEntityId ? (self.hass?.states?.[wxEntityId]?.state || null) : null;
+          const conditions  = cGroups.flatMap((g) => groups[g] || []);
+          const wxOk        = !wxEntityId || (wxState && conditions.includes(wxState));
+          const wxBadge     = !wxEntityId
+            ? html`<span class="diag-badge diag-warn">No weather entity</span>`
+            : !wxState
+              ? html`<span class="diag-badge diag-fail">Weather entity unavailable</span>`
+              : wxOk
+                ? html`<span class="diag-badge diag-ok">Weather: <b>${wxState}</b> ✓</span>`
+                : html`<span class="diag-badge diag-fail">Weather: <b>${wxState}</b> — no match</span>`;
+
+          const entityState    = rule.entity ? (self.hass?.states?.[rule.entity]?.state || null) : null;
+          const triggerState   = (rule.trigger_state || "open").trim().toLowerCase();
+          const entityStateNorm = (entityState || "").trim().toLowerCase();
+          const entityOk       = !!entityState && entityStateNorm === triggerState;
+          const entityBadge    = !rule.entity
+            ? html`<span class="diag-badge diag-warn">No entity selected</span>`
+            : !entityState
+              ? html`<span class="diag-badge diag-fail">Entity unavailable</span>`
+              : entityOk
+                ? html`<span class="diag-badge diag-ok">State: <b>${entityState}</b> ✓</span>`
+                : html`<span class="diag-badge diag-fail">State: <b>${entityState}</b> (expected: ${triggerState})</span>`;
+
+          const isActive = wxOk && entityOk && !!rule.entity;
+          const statusBadge = isActive
+            ? html`<span class="diag-badge diag-active">🔔 ALERT ACTIVE</span>`
+            : html`<span class="diag-badge diag-inactive">🔕 Inactive</span>`;
+
           return html`
             <div class="list-item">
               <div class="list-item-header">
@@ -1789,11 +1830,19 @@ class RoomCardEditor extends LitElement {
                 <button class="btn-remove" @click="${() => self._removeItem('weather_alerts', i)}">Remove</button>
               </div>
 
+              <div class="diag-row">${statusBadge}${wxBadge}${entityBadge}</div>
+
               <label class="ed-label">Entity to watch</label>
               ${self._renderEntityPicker(rule.entity, (v) => self._updateItem('weather_alerts', i, 'entity', v), [])}
 
               ${self._txt("Trigger when state =", rule.trigger_state,
-                (v) => self._updateItem('weather_alerts', i, 'trigger_state', v), "e.g. open")}
+                (v) => self._updateItem('weather_alerts', i, 'trigger_state', v),
+                "Raw HA state — binary sensors: 'on' / 'off'")}
+              <p class="hint" style="margin-top:2px">
+                Use the raw HA state, not the display label. Binary sensors always report
+                <b>on</b> / <b>off</b> regardless of how they are displayed on the card.
+                Covers use <b>open</b> / <b>closed</b>. Check the badge above to see the current state.
+              </p>
 
               <label class="ed-label">Trigger on weather</label>
               <div class="alert-group-row">
@@ -1825,7 +1874,7 @@ class RoomCardEditor extends LitElement {
           `;
         })}
         <button class="btn-add"
-          @click="${() => self._addItem('weather_alerts', { entity: '', trigger_state: 'open', condition_groups: [...DEFAULT_GROUPS], color: 'red', label: '' })}">
+          @click="${() => self._addItem('weather_alerts', { entity: '', trigger_state: 'on', condition_groups: [...DEFAULT_GROUPS], color: 'red', label: '' })}">
           + Add Alert Rule
         </button>
       </div>
@@ -2296,6 +2345,14 @@ class RoomCardEditor extends LitElement {
       .btn-seg-active { background: var(--primary-color, #3b82f6); color: #fff; border-color: var(--primary-color, #3b82f6); }
       .alert-group-row { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
       .alert-group-row .btn-seg { flex: none; padding: 4px 8px; font-size: 0.72rem; display: flex; align-items: center; }
+      /* Alert diagnostics */
+      .diag-row { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+      .diag-badge { font-size: 0.7rem; padding: 2px 8px; border-radius: 99px; border: 1px solid; white-space: nowrap; }
+      .diag-ok       { color: #6ee7b7; border-color: rgba(52,211,153,0.4); background: rgba(52,211,153,0.08); }
+      .diag-fail     { color: #fca5a5; border-color: rgba(239,68,68,0.4);  background: rgba(239,68,68,0.08); }
+      .diag-warn     { color: #fcd34d; border-color: rgba(251,191,36,0.4); background: rgba(251,191,36,0.08); }
+      .diag-active   { color: #fff;    border-color: rgba(239,68,68,0.7);  background: rgba(239,68,68,0.2); font-weight: 700; }
+      .diag-inactive { color: var(--secondary-text-color, #94a3b8); border-color: rgba(148,163,184,0.3); background: transparent; }
 
       .list-item { background: var(--secondary-background-color, rgba(0,0,0,0.2)); border: 1px solid var(--divider-color, #334155); border-radius: 8px; padding: 10px; margin-bottom: 8px; }
       .list-item-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
