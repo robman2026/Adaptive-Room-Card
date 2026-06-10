@@ -262,6 +262,7 @@ class RoomCard extends LitElement {
       weather_forecast_count: 5,
       weather_show_details: true,
       weather_alerts: [],
+      alert_weather_entity: "",
       frosted_glass: false,
       frosted_opacity: 0.52,
       frosted_blur: 22,
@@ -1031,8 +1032,8 @@ class RoomCard extends LitElement {
     for (const rule of rules) {
       if (!rule.entity) continue;
 
-      // Resolve weather entity: per-rule override, then global, then skip weather check
-      const wxEntityId = rule.weather_entity || cfg.weather_entity || null;
+      // Resolve weather entity: per-rule override → global alert entity → display weather entity → none
+      const wxEntityId = rule.weather_entity || cfg.alert_weather_entity || cfg.weather_entity || null;
       const wxState    = wxEntityId ? (this._stateOf(wxEntityId)?.state || null) : null;
 
       // Expand selected group IDs to flat HA condition strings
@@ -1059,7 +1060,9 @@ class RoomCard extends LitElement {
 
   _renderAlertBanner(activeAlerts) {
     if (!activeAlerts.size) return "";
-    const weatherState = this._stateOf(this._config.weather_entity)?.state || "";
+    const cfg          = this._config;
+    const wxId         = cfg.alert_weather_entity || cfg.weather_entity || null;
+    const weatherState = wxId ? (this._stateOf(wxId)?.state || "") : "";
     const condLabel    = weatherState
       ? weatherState.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) + " detected"
       : "Alert";
@@ -1785,7 +1788,34 @@ class RoomCardEditor extends LitElement {
     ];
     const DEFAULT_GROUPS = ["rain", "snow", "lightning", "hail"];
 
+    // Resolved weather entity for diagnostics (same priority as _computeActiveAlerts)
+    const globalWxId    = cfg.alert_weather_entity || cfg.weather_entity || null;
+    const globalWxState = globalWxId ? (self.hass?.states?.[globalWxId]?.state || null) : null;
+
     return html`
+      <div class="section">
+        <div class="section-title">Weather Source</div>
+        <p class="hint">
+          Set a PirateWeather (or any weather) entity here. All alert rules on this card
+          will use it to check conditions — independently of whether the Weather section
+          is enabled on this card.
+        </p>
+        <label class="ed-label">Weather Entity for Alerts</label>
+        ${this._renderEntityPicker(cfg.alert_weather_entity || "",
+          (v) => this._set("alert_weather_entity", v), ["weather"])}
+        ${globalWxId ? html`
+          <div class="diag-row" style="margin-top:6px">
+            ${globalWxState
+              ? html`<span class="diag-badge diag-ok">Current: <b>${globalWxState}</b></span>`
+              : html`<span class="diag-badge diag-fail">Entity not available</span>`}
+            ${!cfg.alert_weather_entity && cfg.weather_entity
+              ? html`<span class="diag-badge diag-warn">Using weather display entity as fallback</span>`
+              : ""}
+          </div>` : html`
+          <div class="diag-row" style="margin-top:6px">
+            <span class="diag-badge diag-warn">No weather entity — rules will fire on entity state alone</span>
+          </div>`}
+      </div>
       <p class="hint">
         When the weather matches and the entity is in the trigger state,
         that tile will pulse and a banner will appear at the top of the card.
@@ -1796,7 +1826,7 @@ class RoomCardEditor extends LitElement {
           const cGroups = rule.condition_groups || [...DEFAULT_GROUPS];
 
           // ── Live status diagnostics ──────────────────────────────────
-          const wxEntityId  = rule.weather_entity || cfg.weather_entity || null;
+          const wxEntityId  = rule.weather_entity || cfg.alert_weather_entity || cfg.weather_entity || null;
           const wxState     = wxEntityId ? (self.hass?.states?.[wxEntityId]?.state || null) : null;
           const conditions  = cGroups.flatMap((g) => groups[g] || []);
           const wxOk        = !wxEntityId || (wxState && conditions.includes(wxState));
