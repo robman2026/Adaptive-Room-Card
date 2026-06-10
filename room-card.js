@@ -1060,15 +1060,17 @@ class RoomCard extends LitElement {
   _renderAlertBanner(activeAlerts) {
     if (!activeAlerts.size) return "";
     const weatherState = this._stateOf(this._config.weather_entity)?.state || "";
-    const condLabel    = weatherState.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-    const icon         = this._weatherIcon(weatherState);
+    const condLabel    = weatherState
+      ? weatherState.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) + " detected"
+      : "Alert";
+    const icon         = weatherState ? this._weatherIcon(weatherState) : "mdi:alert-circle-outline";
     const hasRed       = [...activeAlerts.values()].some((a) => a.color === "red");
 
     return html`
       <div class="alert-banner ${hasRed ? "alert-banner-red" : "alert-banner-orange"}">
         <ha-icon icon="${icon}" class="alert-banner-wx-icon"></ha-icon>
         <div class="alert-banner-body">
-          <div class="alert-banner-title">${condLabel} detected</div>
+          <div class="alert-banner-title">${condLabel}</div>
           <div class="alert-banner-items">
             ${[...activeAlerts.values()].map((a) => html`
               <span class="alert-banner-chip alert-chip-${a.color}">${a.label}</span>
