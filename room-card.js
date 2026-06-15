@@ -138,6 +138,7 @@ class RoomCard extends LitElement {
       _config:          {},
       _ticks:           { state: true },
       _weatherForecast: { state: true },
+      _wxForecastType:  { state: true },
     };
   }
 
@@ -268,6 +269,8 @@ class RoomCard extends LitElement {
       frosted_blur: 22,
       ...config,
     };
+    // Sync inline toggle to configured default
+    this._wxForecastType = this._config.weather_forecast_type || "daily";
     // Re-subscribe to forecast when entity changes
     if (this._hass && config.weather_entity !== undefined) {
       this._subscribeWeatherForecast();
@@ -293,7 +296,7 @@ class RoomCard extends LitElement {
     this._weatherForecast = null;
     const entityId = this._config?.weather_entity;
     if (!entityId || !this._config?.show_weather || !this._hass) return;
-    const fType = this._config?.weather_forecast_type === "hourly" ? "hourly" : "daily";
+    const fType = (this._wxForecastType || this._config?.weather_forecast_type) === "hourly" ? "hourly" : "daily";
     this._hass.connection.subscribeMessage(
       (msg) => { this._weatherForecast = msg.forecast || null; },
       { type: "weather/subscribe_forecast", entity_id: entityId, forecast_type: fType }
@@ -953,11 +956,13 @@ class RoomCard extends LitElement {
     const uvIndex   = attrs.uv_index !== undefined ? attrs.uv_index : null;
     const cloud     = attrs.cloud_coverage !== undefined ? Math.round(attrs.cloud_coverage) : null;
 
+    const activeFcType = this._wxForecastType || cfg.weather_forecast_type || "daily";
+
     // Use WS-subscribed forecast, fall back to attributes
     const forecast  = this._weatherForecast || attrs.forecast || [];
     const count     = Math.min(parseInt(cfg.weather_forecast_count) || 5, forecast.length);
     const fcSlice   = forecast.slice(0, count);
-    const isHourly  = fcSlice.length > 0 && fcSlice[0].templow === undefined;
+    const isHourly  = activeFcType === "hourly" || (fcSlice.length > 0 && fcSlice[0].templow === undefined);
 
     const fmtDay = (dt) => {
       const d = new Date(dt);
@@ -973,6 +978,12 @@ class RoomCard extends LitElement {
         <div class="wx-header">
           <span class="wx-dot"></span>
           <span class="wx-section-label">${(cfg.weather_label || "WEATHER")}</span>
+          <div class="wx-fc-toggle">
+            <button class="wx-fc-btn ${activeFcType === 'daily' ? 'wx-fc-btn-active' : ''}"
+                    @click="${(e) => { e.stopPropagation(); this._wxForecastType = 'daily'; this._subscribeWeatherForecast(); }}">D</button>
+            <button class="wx-fc-btn ${activeFcType === 'hourly' ? 'wx-fc-btn-active' : ''}"
+                    @click="${(e) => { e.stopPropagation(); this._wxForecastType = 'hourly'; this._subscribeWeatherForecast(); }}">H</button>
+          </div>
         </div>
         <div class="wx-current">
           <div class="wx-main">
@@ -1223,7 +1234,11 @@ class RoomCard extends LitElement {
       .wx-unavail { display: flex; align-items: center; gap: 6px; color: rgba(255,255,255,0.35); font-size: 12px; padding: 8px 0; }
       .wx-header { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
       .wx-dot { width: 6px; height: 6px; border-radius: 50%; background: #60a5fa; box-shadow: 0 0 5px #60a5fa; flex-shrink: 0; }
-      .wx-section-label { font-size: 9px; font-weight: 700; letter-spacing: 1.5px; color: rgba(255,255,255,0.45); text-transform: uppercase; }
+      .wx-section-label { font-size: 9px; font-weight: 700; letter-spacing: 1.5px; color: rgba(255,255,255,0.45); text-transform: uppercase; flex: 1; }
+      .wx-fc-toggle { display: flex; gap: 3px; margin-left: auto; }
+      .wx-fc-btn { background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); border-radius: 4px; color: rgba(255,255,255,0.45); font-size: 9px; font-weight: 700; letter-spacing: 0.5px; padding: 2px 6px; cursor: pointer; transition: background 0.15s, color 0.15s; }
+      .wx-fc-btn:hover { background: rgba(255,255,255,0.15); color: rgba(255,255,255,0.75); }
+      .wx-fc-btn-active { background: rgba(96,165,250,0.25); border-color: #60a5fa; color: #60a5fa; }
       .wx-current { display: flex; flex-direction: column; gap: 8px; }
       .wx-main { display: flex; align-items: center; gap: 10px; }
       .wx-cond-icon { --mdc-icon-size: 40px; color: #fbbf24; flex-shrink: 0; }
