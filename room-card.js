@@ -1545,6 +1545,15 @@ class RoomCard extends LitElement {
         -webkit-backdrop-filter: blur(var(--rc-fg-blur)) !important;
         border-color: rgba(255,255,255,0.1) !important;
       }
+
+      /* ── Just HA Dashboard design adoption ──────────────────────────────
+         Gated on --user-* tokens (defined only by the Just HA theme). Falls
+         back to the card's original look on every other dashboard/theme. */
+      .card {
+        background: var(--user-glow-amber, transparent), var(--user-ink-750, linear-gradient(145deg,#1a1f35 0%,#0f1628 50%,#141929 100%)) !important;
+        border: 1px solid var(--user-line, rgba(99,179,237,0.15)) !important;
+        border-radius: var(--user-radius-lg, 13px) !important;
+      }
     `;
   }
 }
