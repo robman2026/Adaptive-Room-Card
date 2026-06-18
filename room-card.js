@@ -267,6 +267,7 @@ class RoomCard extends LitElement {
       frosted_glass: false,
       frosted_opacity: 0.52,
       frosted_blur: 22,
+      jha: false,
       ...config,
     };
     // Sync inline toggle to configured default
@@ -1145,7 +1146,7 @@ class RoomCard extends LitElement {
 
     return html`
       <ha-card>
-        <div class="${cfg.frosted_glass ? 'card card-frosted' : 'card'}">
+        <div class="card${cfg.frosted_glass ? ' card-frosted' : ''}${cfg.jha ? ' card-jha' : ''}">
           <div class="header">
             <div class="header-left">
               ${cfg.room_icon ? html`<ha-icon icon="${cfg.room_icon}" class="room-icon"></ha-icon>` : ""}
@@ -1546,13 +1547,14 @@ class RoomCard extends LitElement {
         border-color: rgba(255,255,255,0.1) !important;
       }
 
-      /* ── Just HA Dashboard design adoption ──────────────────────────────
-         Gated on --user-* tokens (defined only by the Just HA theme). Falls
-         back to the card's original look on every other dashboard/theme. */
-      .card {
-        background: var(--user-glow-amber, transparent), var(--user-ink-750, linear-gradient(145deg,#1a1f35 0%,#0f1628 50%,#141929 100%)) !important;
-        border: 1px solid var(--user-line, rgba(99,179,237,0.15)) !important;
-        border-radius: var(--user-radius-lg, 13px) !important;
+      /* ── Just HA Dashboard design (opt-in via the "Just HA Design" toggle) ──
+         Applied when the .card-jha class is present. Uses the Just HA theme
+         tokens when available (e.g. on Heimdall), otherwise the design's own
+         values, so it looks right on any dashboard. */
+      .card-jha {
+        background: var(--user-glow-amber, radial-gradient(120% 130% at 50% -10%, rgba(224,162,78,.30) 0%, rgba(160,104,43,.10) 38%, rgba(20,20,23,0) 72%)), var(--user-ink-750, #141417) !important;
+        border: 1px solid var(--user-line, rgba(255,255,255,.09)) !important;
+        border-radius: var(--user-radius-lg, 20px) !important;
       }
     `;
   }
@@ -2274,6 +2276,11 @@ class RoomCardEditor extends LitElement {
   _tabAppearance() {
     const cfg = this._config;
     return html`
+      <div class="section">
+        <div class="section-title">✨ Just HA Design</div>
+        ${this._toggle("Just HA Design", cfg.jha, (v) => this._set("jha", v))}
+        <p class="hint">Warm-amber, near-black look matching the Just HA Dashboard. Uses the Just HA theme tokens when present (e.g. on the Heimdall dashboard), and a built-in fallback elsewhere.</p>
+      </div>
       <div class="section">
         <div class="section-title">🎨 Frosted Glass Dark Mode</div>
         ${this._toggle("Frosted Glass Mode", cfg.frosted_glass, (v) => this._set("frosted_glass", v))}
