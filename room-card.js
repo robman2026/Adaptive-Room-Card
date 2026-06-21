@@ -1270,7 +1270,10 @@ class RoomCard extends LitElement {
                    : switches.length <= 4 ? 2 : 3;
 
     const DEFAULT_ORDER = ["weather", "climate", "camera", "power", "mower", "sensors", "switches", "lights", "fans"];
-    const order        = cfg.section_order || DEFAULT_ORDER;
+    const saved        = cfg.section_order;
+    const order        = saved
+      ? [...saved, ...DEFAULT_ORDER.filter((s) => !saved.includes(s))]
+      : DEFAULT_ORDER;
     const BOTTOM       = new Set(["sensors", "switches", "lights", "fans"]);
     const alerts       = this._computeActiveAlerts();
 
@@ -2155,7 +2158,10 @@ class RoomCardEditor extends LitElement {
   _tabLayout() {
     const cfg = this._config;
     const DEFAULT_ORDER = ["weather", "climate", "camera", "power", "mower", "sensors", "switches", "lights", "fans"];
-    const order = cfg.section_order || [...DEFAULT_ORDER];
+    const saved = cfg.section_order;
+    const order = saved
+      ? [...saved, ...DEFAULT_ORDER.filter((s) => !saved.includes(s))]
+      : [...DEFAULT_ORDER];
     const LABELS = {
       weather:  { label: "Weather",           icon: "mdi:weather-partly-cloudy" },
       climate:  { label: "Climate Sensors",   icon: "mdi:thermometer"           },
