@@ -184,6 +184,7 @@ class RoomCard extends LitElement {
   set hass(hass) {
     this._hass = hass;
     this._syncLightBars();
+    this._syncFanBars();
     this.requestUpdate();
   }
 
@@ -193,6 +194,8 @@ class RoomCard extends LitElement {
     }
     this._attachLightListeners();
     this._syncLightBars();
+    this._attachFanListeners();
+    this._syncFanBars();
   }
 
   _syncLightBars() {
@@ -214,6 +217,31 @@ class RoomCard extends LitElement {
       if (bar)  bar.style.width = w + "%";
       if (sub)  sub.textContent = !on ? "Off" : (isLight && briPct > 0 && briPct < 100 ? briPct + "%" : "On");
       if (ago)  ago.textContent = this._agoStr(stateObj.last_changed);
+    });
+  }
+
+  _syncFanBars() {
+    if (!this.shadowRoot || !this._hass || !this._config?.fans) return;
+    (this._config.fans || []).forEach((fan, i) => {
+      if (this._draggingFanIdx === i) return;
+      const stateObj = this._hass.states?.[fan.entity];
+      if (!stateObj) return;
+      const on  = stateObj.state === "on";
+      const pct = on ? Math.max(0, Math.min(100, Math.round(stateObj.attributes?.percentage || 0))) : 0;
+      const fill = this.shadowRoot.getElementById("fn-fill-" + i);
+      const bar  = this.shadowRoot.getElementById("fn-bar-"  + i);
+      const sub  = this.shadowRoot.getElementById("fn-sub-"  + i);
+      const ago  = this.shadowRoot.getElementById("fn-ago-"  + i);
+      const dir  = this.shadowRoot.getElementById("fn-dir-"  + i);
+      if (fill) { fill.style.width = pct + "%"; fill.style.opacity = on ? "1" : "0"; }
+      if (bar)  bar.style.width = pct + "%";
+      if (sub)  sub.textContent = !on ? "Off" : (pct > 0 ? pct + "%" : "On");
+      if (ago)  ago.textContent = this._agoStr(stateObj.last_changed);
+      if (dir) {
+        const d = (stateObj.attributes?.direction || "forward").toLowerCase();
+        dir.textContent = d === "reverse" ? "↺ Rev" : "↻ Fwd";
+        dir.dataset.dir = d;
+      }
     });
   }
 
@@ -246,6 +274,9 @@ class RoomCard extends LitElement {
       lights: [],
       lights_label: "Lights",
       lights_columns: 4,
+      fans: [],
+      fans_label: "Fans",
+      fans_columns: 4,
       camera_entity: "",
       show_camera: false,
       mower_entity: "",
@@ -669,6 +700,131 @@ class RoomCard extends LitElement {
 
       tile.addEventListener("pointercancel", function() {
         clearTimeout(holdTimer); self._draggingIdx = null; startX = null; dragging = false;
+      });
+    });
+  }
+
+  // ── Fans section ─────────────────────────────────────────────────────────────
+
+  _renderFans(alerts = new Map()) {
+    const cfg  = this._config;
+    const fans = cfg.fans || [];
+    if (!fans.length) return "";
+    const cols  = Math.max(1, Math.min(4, parseInt(cfg.fans_columns) || 4));
+    const label = cfg.fans_label || "Fans";
+    return html`
+      <div class="fans-section">
+        <div class="fans-section-header">
+          <span class="fans-dot"></span>${label.toUpperCase()}
+        </div>
+        <div class="fans-grid" style="--fn-cols:${cols}">
+          ${fans.map((fan, i) => this._renderFanTile(fan, i, alerts))}
+        </div>
+      </div>
+    `;
+  }
+
+  _renderFanTile(fan, i, alerts = new Map()) {
+    const stateObj  = this._stateOf(fan.entity);
+    const on        = stateObj?.state === "on";
+    const unavail   = !stateObj;
+    const pct       = on ? Math.max(0, Math.min(100, Math.round(stateObj?.attributes?.percentage || 0))) : 0;
+    const direction = (stateObj?.attributes?.direction || "forward").toLowerCase();
+    const hasDir    = stateObj?.attributes?.direction !== undefined;
+    const name      = fan.label || this._friendlyName(fan.entity) || fan.entity;
+    const icon      = fan.icon  || "mdi:fan";
+    const icolor    = on ? "#38bdf8" : "rgba(255,255,255,0.5)";
+    const subTxt    = unavail ? "N/A" : on ? (pct > 0 ? pct + "%" : "On") : "Off";
+    const ago       = stateObj ? this._agoStr(stateObj.last_changed) : "";
+    const alert     = alerts.get(fan.entity);
+    const cls       = "fn-tile " + (unavail ? "fn-unavail" : on ? "fn-on" : "fn-off") + (alert ? ` alert-pulse-${alert.color}` : "");
+    const dirLabel  = direction === "reverse" ? "↺ Rev" : "↻ Fwd";
+
+    return html`
+      <div class="${cls}" data-idx="${i}" data-entity="${fan.entity || ""}">
+        <div class="fn-fill" id="fn-fill-${i}"
+             style="width:${pct}%;opacity:${on ? 1 : 0}"></div>
+        ${hasDir ? html`
+          <button class="fn-dir-btn" id="fn-dir-${i}" data-dir="${direction}"
+                  @click="${(e) => { e.stopPropagation(); const next = direction === "reverse" ? "forward" : "reverse"; this._hass?.callService("fan", "set_direction", { entity_id: fan.entity, direction: next }); }}">
+            ${dirLabel}
+          </button>` : ""}
+        <div class="fn-icon-wrap">
+          <ha-icon icon="${icon}" style="color:${icolor};--mdc-icon-size:18px"></ha-icon>
+        </div>
+        <div class="fn-info">
+          <div class="fn-name">${name}</div>
+          <div class="fn-state" id="fn-sub-${i}">${subTxt}</div>
+          <div class="fn-ago" id="fn-ago-${i}">${ago}</div>
+        </div>
+        <div class="fn-bar-wrap">
+          <div class="fn-bar" id="fn-bar-${i}" style="width:${pct}%"></div>
+        </div>
+      </div>
+    `;
+  }
+
+  _attachFanListeners() {
+    const self = this;
+    if (!this.shadowRoot) return;
+    this.shadowRoot.querySelectorAll(".fn-tile[data-entity]").forEach(function(tile) {
+      if (tile._fnListened) return;
+      tile._fnListened = true;
+      const entity = tile.dataset.entity;
+      const idx    = parseInt(tile.dataset.idx);
+      if (!entity) return;
+
+      let startX = null, startPct = 0, dragging = false, holdTimer = null, longPressed = false;
+
+      tile.addEventListener("pointerdown", function(e) {
+        if (e.target.classList.contains("fn-dir-btn")) return;
+        startX = e.clientX; dragging = false; longPressed = false;
+        tile.setPointerCapture(e.pointerId);
+        startPct = Math.round(self._hass?.states?.[entity]?.attributes?.percentage || 0);
+        holdTimer = setTimeout(function() {
+          if (!dragging) { longPressed = true; self._moreInfo(entity); }
+        }, 600);
+      });
+
+      tile.addEventListener("pointermove", function(e) {
+        if (startX === null) return;
+        const dx = e.clientX - startX;
+        if (Math.abs(dx) > 8) {
+          if (!dragging) { dragging = true; self._draggingFanIdx = idx; clearTimeout(holdTimer); }
+          const newPct = Math.max(1, Math.min(100, startPct + Math.round(dx * 0.4)));
+          const fill = self.shadowRoot.getElementById("fn-fill-" + idx);
+          const bar  = self.shadowRoot.getElementById("fn-bar-"  + idx);
+          const sub  = self.shadowRoot.getElementById("fn-sub-"  + idx);
+          if (fill) { fill.style.width = newPct + "%"; fill.style.opacity = "1"; }
+          if (bar)  bar.style.width  = newPct + "%";
+          if (sub)  sub.textContent  = newPct + "%";
+          tile._pendingPct = newPct;
+        }
+      });
+
+      tile.addEventListener("pointerup", function() {
+        clearTimeout(holdTimer);
+        self._draggingFanIdx = null;
+        if (!longPressed) {
+          if (dragging && tile._pendingPct !== undefined) {
+            self._hass?.callService("fan", "set_percentage", { entity_id: entity, percentage: tile._pendingPct });
+            tile._pendingPct = undefined;
+          } else {
+            const on = self._hass?.states?.[entity]?.state === "on";
+            if (on) {
+              const fill = self.shadowRoot?.getElementById("fn-fill-" + idx);
+              const bar  = self.shadowRoot?.getElementById("fn-bar-"  + idx);
+              if (fill) { fill.style.width = "0%"; fill.style.opacity = "0"; }
+              if (bar)  bar.style.width = "0%";
+            }
+            self._hass?.callService("fan", on ? "turn_off" : "turn_on", { entity_id: entity });
+          }
+        }
+        startX = null; dragging = false; longPressed = false;
+      });
+
+      tile.addEventListener("pointercancel", function() {
+        clearTimeout(holdTimer); self._draggingFanIdx = null; startX = null; dragging = false;
       });
     });
   }
@@ -1114,9 +1270,9 @@ class RoomCard extends LitElement {
                    : switches.length === 3 ? 3
                    : switches.length <= 4 ? 2 : 3;
 
-    const DEFAULT_ORDER = ["weather", "climate", "camera", "power", "mower", "sensors", "switches", "lights"];
+    const DEFAULT_ORDER = ["weather", "climate", "camera", "power", "mower", "sensors", "switches", "lights", "fans"];
     const order        = cfg.section_order || DEFAULT_ORDER;
-    const BOTTOM       = new Set(["sensors", "switches", "lights"]);
+    const BOTTOM       = new Set(["sensors", "switches", "lights", "fans"]);
     const alerts       = this._computeActiveAlerts();
 
     const sectionMap = {
@@ -1128,6 +1284,7 @@ class RoomCard extends LitElement {
       sensors:  () => binary.length > 0 ? html`<div class="${snCols > 1 ? "sensors-grid" : "sensors-list"}" style="${snCols > 1 ? `--sn-cols:${snCols}` : ""}">${binary.map((s) => this._renderBinarySensor(s, alerts))}</div>` : "",
       switches: () => switches.length > 0 ? html`<div class="lights-row" style="--sw-cols:${swCols}">${switches.map((s) => this._renderSwitch(s, alerts))}</div>` : "",
       lights:   () => (cfg.lights || []).length > 0 ? this._renderLights(alerts) : "",
+      fans:     () => (cfg.fans   || []).length > 0 ? this._renderFans(alerts)   : "",
     };
 
     const hasBottomContent = binary.length > 0 || switches.length > 0;
@@ -1416,6 +1573,55 @@ class RoomCard extends LitElement {
       .lt-ago { font-size: 10px; color: rgba(255,255,255,0.28); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
       .lt-bar-wrap { position: absolute; bottom: 0; left: 0; right: 0; height: 3px; background: rgba(255,255,255,0.06); z-index: 2; }
       .lt-bar { height: 3px; border-radius: 0; background: rgba(255,210,109,0.7); transition: width 0.1s; }
+
+      /* ── Dedicated Fans section ── */
+      .fans-section { padding: 0 16px 14px; position: relative; z-index: 1; }
+      .fans-section-header {
+        display: flex; align-items: center; gap: 6px;
+        font-size: 9px; font-weight: 700; letter-spacing: 1.4px; text-transform: uppercase;
+        color: rgba(255,255,255,0.35); margin-bottom: 8px;
+      }
+      .fans-dot { width: 6px; height: 6px; border-radius: 50%; background: #38bdf8; flex-shrink: 0; }
+      .fans-grid { display: grid; grid-template-columns: repeat(var(--fn-cols,4),1fr); gap: 7px; }
+      .fn-tile {
+        position: relative; border-radius: 12px; padding: 11px 12px;
+        display: flex; align-items: center; gap: 11px;
+        cursor: pointer; overflow: hidden; border: 1px solid rgba(255,255,255,0.06);
+        transition: border-color 0.15s; min-width: 0;
+        -webkit-user-select: none; user-select: none; touch-action: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .fn-tile.fn-off  { background: rgba(255,255,255,0.04); }
+      .fn-tile.fn-on   { background: rgba(56,189,248,0.04); border-color: rgba(56,189,248,0.18); }
+      .fn-tile.fn-unavail { opacity: 0.35; pointer-events: none; }
+      .fn-fill {
+        position: absolute; inset: 0; pointer-events: none; border-radius: 11px;
+        background: rgba(56,189,248,0.18); transition: width 0.12s, opacity 0.15s;
+      }
+      .fn-tile.fn-off .fn-fill { opacity: 0; }
+      .fn-dir-btn {
+        position: absolute; top: 6px; right: 8px; z-index: 3;
+        background: rgba(56,189,248,0.15); border: 1px solid rgba(56,189,248,0.3);
+        border-radius: 5px; color: #38bdf8; font-size: 9px; font-weight: 700;
+        letter-spacing: 0.3px; padding: 2px 5px; cursor: pointer; line-height: 1.4;
+        white-space: nowrap;
+      }
+      .fn-dir-btn:hover { background: rgba(56,189,248,0.28); }
+      .fn-icon-wrap {
+        width: 38px; height: 38px; border-radius: 50%; background: rgba(0,0,0,0.35);
+        display: flex; align-items: center; justify-content: center; flex-shrink: 0; z-index: 1;
+      }
+      .fn-info { flex: 1; min-width: 0; z-index: 1; }
+      .fn-name {
+        font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.92);
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.2; margin-bottom: 3px;
+      }
+      .fn-tile.fn-on .fn-name { color: #fff; }
+      .fn-state { font-size: 11px; color: rgba(255,255,255,0.45); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .fn-tile.fn-on .fn-state { color: rgba(56,189,248,0.85); }
+      .fn-ago { font-size: 10px; color: rgba(255,255,255,0.28); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+      .fn-bar-wrap { position: absolute; bottom: 0; left: 0; right: 0; height: 3px; background: rgba(255,255,255,0.06); z-index: 2; }
+      .fn-bar { height: 3px; border-radius: 0; background: rgba(56,189,248,0.7); transition: width 0.1s; }
 
       .power-section { margin: 0 16px 12px; position: relative; z-index: 1; }
       .power-tile {
@@ -1959,7 +2165,7 @@ class RoomCardEditor extends LitElement {
 
   _tabLayout() {
     const cfg = this._config;
-    const DEFAULT_ORDER = ["weather", "climate", "camera", "power", "mower", "sensors", "switches", "lights"];
+    const DEFAULT_ORDER = ["weather", "climate", "camera", "power", "mower", "sensors", "switches", "lights", "fans"];
     const order = cfg.section_order || [...DEFAULT_ORDER];
     const LABELS = {
       weather:  { label: "Weather",           icon: "mdi:weather-partly-cloudy" },
@@ -1970,6 +2176,7 @@ class RoomCardEditor extends LitElement {
       sensors:  { label: "Binary Sensors",    icon: "mdi:motion-sensor"         },
       switches: { label: "Switches",          icon: "mdi:toggle-switch"         },
       lights:   { label: "Lights",            icon: "mdi:lightbulb-group"       },
+      fans:     { label: "Fans",              icon: "mdi:fan"                   },
     };
 
     const onDragStart = (e, fromIdx) => {
@@ -2225,6 +2432,37 @@ class RoomCardEditor extends LitElement {
     `;
   }
 
+  // ── TAB: Fans ────────────────────────────────────────────────────────────────
+
+  _tabFans() {
+    const cfg   = this._config;
+    const items = cfg.fans || [];
+    return html`
+      <div class="section">
+        ${this._txt("Section Label", cfg.fans_label, (v) => this._set("fans_label", v), "e.g. Fans")}
+        ${this._numSelect("Columns", cfg.fans_columns || 4, [1, 2, 3, 4], (v) => this._set("fans_columns", v))}
+      </div>
+      <div class="section">
+        ${items.map((s, i) => html`
+          <div class="list-item">
+            <div class="list-item-header">
+              <span class="list-item-num">Fan ${i + 1}</span>
+              <button class="btn-remove" @click="${() => this._removeItem("fans", i)}">Remove</button>
+            </div>
+            <label class="ed-label">Entity</label>
+            ${this._renderEntityPicker(s.entity, (v) => this._updateItem("fans", i, "entity", v), ["fan"])}
+            ${this._txt("Label", s.label, (v) => this._updateItem("fans", i, "label", v), "e.g. Ceiling Fan")}
+            ${this._iconSelect("Icon", s.icon, (v) => this._updateItem("fans", i, "icon", v))}
+          </div>
+        `)}
+        <button class="btn-add"
+          @click="${() => this._addItem("fans", { entity: "", label: "", icon: "mdi:fan" })}">
+          + Add Fan
+        </button>
+      </div>
+    `;
+  }
+
   // ── TAB: Power ───────────────────────────────────────────────────────────────
 
   _tabPower() {
@@ -2332,6 +2570,7 @@ class RoomCardEditor extends LitElement {
       { id: "sensors",    label: "Sensors",    icon: "mdi:motion-sensor",       render: () => this._tabSensors()    },
       { id: "switches",   label: "Switches",   icon: "mdi:toggle-switch",       render: () => this._tabSwitches()   },
       { id: "lights",     label: "Lights",     icon: "mdi:lightbulb-group",     render: () => this._tabLights()     },
+      { id: "fans",       label: "Fans",       icon: "mdi:fan",                 render: () => this._tabFans()       },
       { id: "power",      label: "Power",      icon: "mdi:flash-outline",       render: () => this._tabPower()      },
       { id: "mower",      label: "Mower",      icon: "mdi:robot-mower-outline", render: () => this._tabMower()      },
       { id: "layout",     label: "Layout",     icon: "mdi:view-dashboard-edit", render: () => this._tabLayout()     },
