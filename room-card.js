@@ -139,6 +139,7 @@ class RoomCard extends LitElement {
       _ticks:           { state: true },
       _weatherForecast: { state: true },
       _wxForecastType:  { state: true },
+      _alertForecasts:  { state: true },
     };
   }
 
@@ -295,6 +296,8 @@ class RoomCard extends LitElement {
       weather_show_details: true,
       weather_alerts: [],
       alert_weather_entity: "",
+      alert_require_precip: true,
+      alert_precip_min: 0.1,
       frosted_glass: false,
       frosted_opacity: 0.52,
       frosted_blur: 22,
@@ -303,8 +306,9 @@ class RoomCard extends LitElement {
     // Sync inline toggle to configured default
     this._wxForecastType = this._config.weather_forecast_type || "daily";
     // Re-subscribe to forecast when entity changes
-    if (this._hass && config.weather_entity !== undefined) {
-      this._subscribeWeatherForecast();
+    if (this._hass) {
+      if (config.weather_entity !== undefined) this._subscribeWeatherForecast();
+      this._subscribeAlertForecasts();
     }
   }
 
@@ -312,6 +316,7 @@ class RoomCard extends LitElement {
     super.connectedCallback();
     this._tickInterval = setInterval(() => { this._ticks = Date.now(); }, 1000);
     this._subscribeWeatherForecast();
+    this._subscribeAlertForecasts();
   }
 
   disconnectedCallback() {
@@ -319,6 +324,7 @@ class RoomCard extends LitElement {
     clearInterval(this._tickInterval);
     this._unsubWeatherForecast?.();
     this._unsubWeatherForecast = null;
+    this._unsubAlertForecasts();
   }
 
   _subscribeWeatherForecast() {
@@ -333,6 +339,68 @@ class RoomCard extends LitElement {
       { type: "weather/subscribe_forecast", entity_id: entityId, forecast_type: fType }
     ).then((unsub) => { this._unsubWeatherForecast = unsub; })
      .catch(() => {}); // fallback to attributes.forecast silently
+  }
+
+  _unsubAlertForecasts() {
+    (this._unsubAlertFc || []).forEach((u) => { try { u?.(); } catch (e) {} });
+    this._unsubAlertFc = [];
+  }
+
+  // Subscribe to HOURLY forecasts for every distinct weather entity used by
+  // alert rules, so alerts can be gated on actual near-term precipitation.
+  _subscribeAlertForecasts() {
+    this._unsubAlertForecasts();
+    const cfg = this._config;
+    if (!this._hass || !cfg?.weather_alerts?.length || cfg.alert_require_precip === false) return;
+
+    // Collect distinct weather entities referenced by rules
+    const ids = new Set();
+    for (const rule of cfg.weather_alerts) {
+      const id = rule.weather_entity || cfg.alert_weather_entity || cfg.weather_entity || null;
+      if (id) ids.add(id);
+    }
+    if (!ids.size) return;
+
+    this._alertForecasts = { ...(this._alertForecasts || {}) };
+    ids.forEach((entityId) => {
+      this._hass.connection.subscribeMessage(
+        (msg) => {
+          this._alertForecasts = { ...(this._alertForecasts || {}), [entityId]: msg.forecast || null };
+        },
+        { type: "weather/subscribe_forecast", entity_id: entityId, forecast_type: "hourly" }
+      ).then((unsub) => { (this._unsubAlertFc = this._unsubAlertFc || []).push(unsub); })
+       .catch(() => {}); // entity may not support hourly forecast; guard falls back
+    });
+  }
+
+  // Does the near-term forecast for an alert weather entity show real precipitation?
+  // Returns true if precipitation is confirmed, false if confirmed dry, null if unknown.
+  _forecastHasPrecip(entityId) {
+    if (!entityId) return null;
+    const cfg = this._config;
+    const minMm = parseFloat(cfg.alert_precip_min);
+    const threshold = isNaN(minMm) ? 0.1 : minMm;
+    // Prefer the alert subscription, fall back to display forecast (same entity), then attributes
+    let fc = this._alertForecasts?.[entityId]
+          || (entityId === cfg.weather_entity ? this._weatherForecast : null)
+          || this._stateOf(entityId)?.attributes?.forecast
+          || null;
+    if (!Array.isArray(fc) || !fc.length) return null; // unknown → don't block
+    const near = fc.slice(0, 2); // current + next hour
+    let sawField = false;
+    for (const f of near) {
+      const amt  = f.precipitation;
+      const prob = f.precipitation_probability;
+      if (amt !== undefined && amt !== null) {
+        sawField = true;
+        if (parseFloat(amt) >= threshold) return true;
+      }
+      if (prob !== undefined && prob !== null) {
+        sawField = true;
+        if (parseFloat(prob) >= 50) return true;
+      }
+    }
+    return sawField ? false : null; // no precip fields at all → unknown
   }
 
   // ── helpers ──────────────────────────────────────────────────────────────────
@@ -1211,6 +1279,15 @@ class RoomCard extends LitElement {
       if (wxEntityId) {
         if (!wxState) continue;                      // entity not available yet
         if (!conditions.includes(wxState)) continue; // condition doesn't match
+
+        // Precipitation guard: for wet conditions, confirm against the near-term
+        // forecast so a bogus "rainy" state (e.g. PirateWeather with 0mm precip)
+        // won't trigger. Only blocks when the forecast CONFIRMS it's dry; if the
+        // forecast is unknown/unavailable we fall back to condition-only.
+        const PRECIP_CONDS = ["rainy", "pouring", "lightning-rainy", "snowy", "snowy-rainy", "hail"];
+        if (cfg.alert_require_precip !== false && PRECIP_CONDS.includes(wxState)) {
+          if (this._forecastHasPrecip(wxEntityId) === false) continue;
+        }
       }
 
       // Entity state check — case-insensitive, trimmed
@@ -2039,6 +2116,27 @@ class RoomCardEditor extends LitElement {
           <div class="diag-row" style="margin-top:6px">
             <span class="diag-badge diag-warn">No weather entity — rules will fire on entity state alone</span>
           </div>`}
+      </div>
+      <div class="section">
+        <div class="section-title">False-Alarm Guard</div>
+        <p class="hint">
+          Some integrations (e.g. PirateWeather) can report a <b>rainy</b> condition
+          with no actual precipitation. With this on, wet-weather alerts only fire when
+          the near-term hourly forecast shows real precipitation, cross-checking the
+          reported condition.
+        </p>
+        ${this._toggle("Require forecast precipitation for rain/snow alerts",
+          cfg.alert_require_precip !== false, (v) => this._set("alert_require_precip", v))}
+        ${cfg.alert_require_precip !== false ? html`
+          ${this._txt("Min precipitation (mm)",
+            cfg.alert_precip_min !== undefined ? String(cfg.alert_precip_min) : "0.1",
+            (v) => this._set("alert_precip_min", parseFloat(v) || 0), "e.g. 0.1")}
+          <p class="hint">
+            An alert also fires if the forecast precipitation probability is ≥ 50%.
+            If the entity provides no forecast at all, the guard is skipped and the
+            condition alone is used.
+          </p>
+        ` : ""}
       </div>
       <p class="hint">
         When the weather matches and the entity is in the trigger state,
